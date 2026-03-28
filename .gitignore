@@ -1,79 +1,15 @@
-# Model weights (download separately, ~120GB total)
-models/
+# API Keys and Environment Variables (CRITICAL)
+.env
 
-# Intermediate/deprecated Dockerfiles (keep only *-cuda13-build)
-Dockerfile
-Dockerfile.asr
-Dockerfile.asr-cuda13
-
-# Development test files
-test_asr.py
-
-# External repositories (install via pip)
-pipecat/
-
-# Python
+# Python compilation files
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*.pyc
+*.pyo
+*.pyd
 
-# Virtual environments
-.venv/
-venv/
-ENV/
-env/
+# Local Docker artifacts
+.docker/
 
-# IDE and editors
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Claude Code
-.claude/
-
-# Lock files (large and platform-specific)
-uv.lock
-
-# Planning/development notes
-PLANNING.md
-PLANNING-LLM.md
-WEBSOCKET_PLANNING.md
-
-# Binary documentation
-*.pdf
-
-# Test outputs
-tests/fixtures/output/
-
-# Large test fixtures (keep only harvard_16k.wav)
-tests/fixtures/harvard.wav
-tests/fixtures/test_speech.wav
-tests/fixtures/sample.flac
-
-# Temporary/generated files
-*.log
-*.tmp
+# OS generated files
 .DS_Store
 Thumbs.db
-
-# GGUF files (large model format)
-*.gguf
