@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import sys
 import time
 import wave
 from datetime import datetime
@@ -31,7 +32,7 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
-from pipecat.services.openai import OpenAILLMService
+from pipecat.services.openai import OpenAILLMService, OpenAITTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -44,8 +45,8 @@ from v2v_metrics import V2VMetricsProcessor
 load_dotenv(override=True)
 
 # Configuration from environment
-NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://localhost:8080")
-NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://localhost:8001")
+NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://127.0.0.1:8080")
+NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://127.0.0.1:8001")
 
 # Audio recording configuration
 ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
@@ -118,19 +119,30 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         sample_rate=16000,
     )
 
-    # WebSocket Magpie TTS with adaptive mode
-    # Adaptive mode: streaming for first segment (~370ms TTFB), batch for subsequent (quality)
-    tts = MagpieWebSocketTTSService(
-        server_url=NVIDIA_TTS_URL,
-        voice="aria",
-        language="en",
-        params=MagpieWebSocketTTSService.InputParams(
+    # Dynamic TTS Routing
+    active_tts = os.getenv("ACTIVE_TTS", "magpie").lower()
+    
+    if active_tts == "voxtral":
+        voxtral_url = os.getenv("VOXTRAL_TTS_URL", "http://127.0.0.1:8002/v1")
+        tts = OpenAITTSService(
+            api_key=os.getenv("OPENAI_API_KEY", "dummy_key_to_bypass_sdk_check"),
+            base_url=voxtral_url,
+            model="mistralai/Voxtral-4B-TTS-2603",
+            voice="casual_female"
+        )
+        logger.info(f"Using REST API Voxtral TTS at {voxtral_url}")
+    else:
+        tts = MagpieWebSocketTTSService(
+            server_url=NVIDIA_TTS_URL,
+            voice="aria",
             language="en",
-            streaming_preset="conservative",
-            use_adaptive_mode=True,
-        ),
-    )
-    logger.info("Using WebSocket Magpie TTS (adaptive mode)")
+            params=MagpieWebSocketTTSService.InputParams(
+                language="en",
+                streaming_preset="conservative",
+                use_adaptive_mode=True,
+            ),
+        )
+        logger.info("Using WebSocket Magpie TTS (adaptive mode)")
 
     # Voice-to-voice response time metrics
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
@@ -158,8 +170,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         {
             "role": "system",
             "content": (
-                "You are a helpful AI assistant running on an NVIDIA DGX Spark. "
-                "You are built with Nemotron Three Nano, a large language model developed by NVIDIA. "
+                "You are a helpful AI assistant. "
+                "You are built with Symbiant AI Realtime, a large language model developed by Symbiant AI. "
                 "Your goal is to have a natural conversation with the user. "
                 "Keep your responses concise and conversational since they will be spoken aloud. "
                 "Avoid special characters. Use only simple, plain text sentences. "
@@ -243,6 +255,15 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
+    # --- FAIL LOUDLY GUARDRAIL ---
+    if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
+        print("\n" + "!"*60)
+        print("💥 FATAL ERROR: GEMINI_API_KEY is missing or empty!")
+        print("💥 The agent-core cannot boot without cognitive routing.")
+        print("💥 Halting immediately to prevent zombie connections.")
+        print("!"*60 + "\n")
+        sys.exit(1)
+    # -----------------------------
 
+    from pipecat.runner.run import main
     main()

@@ -1,0 +1,11 @@
+FROM vllm/vllm-openai:latest
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN pip install git+https://github.com/vllm-project/vllm-omni.git
+
+# THE SILVER BULLET: Hunt down the hidden YAML files and force all stages to 35% utilization
+RUN find /usr/local/lib/python3.12/dist-packages/vllm_omni -name "*.yaml" -exec sed -i -E 's/gpu_memory_utilization: *0\.[0-9]+/gpu_memory_utilization: 0.35/g' {} +
+
+EXPOSE 8002
+
+ENTRYPOINT ["vllm", "serve"]

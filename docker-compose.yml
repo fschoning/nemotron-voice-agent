@@ -1,5 +1,5 @@
 services:
-  # 1. The Hearing Engine (Local DGX Spark ASR)
+  # 1. The Hearing Engine (Parakeet ASR)
   asr-engine:
     build:
       context: .
@@ -8,6 +8,7 @@ services:
     container_name: agent-asr
     restart: unless-stopped
     ipc: host
+    network_mode: host
     environment:
       - NVIDIA_DISABLE_REQUIRE=1
       - ENABLE_ASR=true
@@ -18,9 +19,6 @@ services:
     volumes:
       - ./:/workspace
       - ~/.cache/huggingface:/root/.cache/huggingface
-    command: ["bash", "/workspace/scripts/start_unified.sh"]
-    ports:
-      - "8080:8080"
     deploy:
       resources:
         reservations:
@@ -28,8 +26,9 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, compute, utility]
+    command: ["bash", "/workspace/scripts/start_unified.sh"]
 
-  # 2. The Voice Engine (Isolated Magpie TTS)
+  # 2. The Voice Engine 1 (Magpie TTS)
   tts-engine:
     build:
       context: .
@@ -38,6 +37,7 @@ services:
     container_name: agent-tts
     restart: unless-stopped
     ipc: host
+    network_mode: host
     environment:
       - NVIDIA_DISABLE_REQUIRE=1
       - ENABLE_ASR=false
@@ -48,9 +48,6 @@ services:
     volumes:
       - ./:/workspace
       - ~/.cache/huggingface:/root/.cache/huggingface
-    command: ["bash", "/workspace/scripts/start_unified.sh"]
-    ports:
-      - "8001:8001"
     deploy:
       resources:
         reservations:
@@ -58,10 +55,35 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, compute, utility]
+    command: ["bash", "/workspace/scripts/start_unified.sh"]
 
-  # 3. The Brain (Pipecat + Gemini)
+  # 3. The Voice Engine 2 (Voxtral TTS)
+  voxtral-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.voxtral
+    image: voxtral-omni:latest
+    container_name: agent-voxtral
+    restart: unless-stopped
+    ipc: host
+    network_mode: host
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+    # CUDA Graphs Enabled (No enforce-eager), 8192 context window
+    command: ["mistralai/Voxtral-4B-TTS-2603", "--port", "8002", "--omni", "--dtype", "bfloat16", "--kv-cache-dtype", "fp8", "--max-model-len", "1024", "--max-num-seqs", "2"]
+
+  # 4. The Brain (Pipecat + Gemini)
   agent-core:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
     image: agent-core-custom:latest
@@ -73,10 +95,12 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - NVIDIA_ASR_URL=ws://127.0.0.1:8080
       - NVIDIA_TTS_URL=http://127.0.0.1:8001
+      - VOXTRAL_TTS_URL=http://127.0.0.1:8002/v1
+      - ACTIVE_TTS=magpie
       - NVIDIA_DISABLE_REQUIRE=1
     depends_on:
       - asr-engine
-      - tts-engine
+      - voxtral-engine
     deploy:
       resources:
         reservations:
