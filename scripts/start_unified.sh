@@ -303,14 +303,13 @@ if [ "$ENABLE_LLM" = "true" ]; then
     case "$LLM_MODE" in
         llamacpp-q8)
             echo "  Mode: llama.cpp Q8 (best quality/VRAM balance)"
-            llama-server \
-                -m "${LLAMA_MODEL}" \
+            python3 -m llama_cpp.server \
+                --model "${LLAMA_MODEL}" --model_alias "local" \
                 --host 0.0.0.0 \
                 --port 8000 \
-                --n-gpu-layers 99 \
-                --ctx-size "${LLAMA_CTX_SIZE}" \
-                --flash-attn on \
-                --parallel "${LLAMA_PARALLEL}" \
+                --chat_format chatml \
+                --n_gpu_layers 99 \
+                --n_ctx "${LLAMA_CTX_SIZE}" \
                 > "$LOG_DIR/llm.log" 2>&1 &
             LLM_PID=$!
             ;;
@@ -318,18 +317,17 @@ if [ "$ENABLE_LLM" = "true" ]; then
             echo "  Mode: llama.cpp Q4 (optimized for 32GB GPU)"
             # Q4 uses same context as Q8 (default 16384), all layers on GPU, quantized KV cache
             LLAMA_Q4_CTX_SIZE="${LLAMA_CTX_SIZE:-16384}"
-            llama-server \
-                -m "${LLAMA_MODEL}" \
+            python3 -m llama_cpp.server \
+                --model "${LLAMA_MODEL}" --model_alias "local" \
                 --host 0.0.0.0 \
                 --port 8000 \
-                --n-gpu-layers 99 \
-                --ctx-size "${LLAMA_Q4_CTX_SIZE}" \
-                --flash-attn on \
-                --parallel "${LLAMA_PARALLEL}" \
-                --cache-ram 0 \
-                --reasoning-budget "${LLAMA_REASONING_BUDGET}" \
-                -ctk q8_0 \
-                -ctv q8_0 \
+                --chat_format chatml \
+                --n_gpu_layers 99 \
+                --n_ctx "${LLAMA_Q4_CTX_SIZE}" \
+                 \
+                 \
+                 \
+                 \
                 > "$LOG_DIR/llm.log" 2>&1 &
             LLM_PID=$!
             ;;
@@ -340,6 +338,7 @@ if [ "$ENABLE_LLM" = "true" ]; then
                     --model "${VLLM_MODEL}" \
                     --host 0.0.0.0 \
                     --port 8000 \
+                --chat_format chatml \
                     --dtype bfloat16 \
                     --trust-remote-code \
                     --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
@@ -355,6 +354,7 @@ if [ "$ENABLE_LLM" = "true" ]; then
                 --model "${VLLM_MODEL}" \
                 --host 0.0.0.0 \
                 --port 8000 \
+                --chat_format chatml \
                 --dtype bfloat16 \
                 --trust-remote-code \
                 --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
@@ -374,6 +374,7 @@ if [ "$ENABLE_LLM" = "true" ]; then
                     --model "${VLLM_MODEL}" \
                     --host 0.0.0.0 \
                     --port 8000 \
+                --chat_format chatml \
                     --dtype bfloat16 \
                     --kv-cache-dtype fp8 \
                     --mamba-ssm-cache-dtype float32 \
@@ -391,6 +392,7 @@ if [ "$ENABLE_LLM" = "true" ]; then
                 --model "${VLLM_MODEL}" \
                 --host 0.0.0.0 \
                 --port 8000 \
+                --chat_format chatml \
                 --dtype bfloat16 \
                 --kv-cache-dtype fp8 \
                 --mamba-ssm-cache-dtype float32 \
@@ -410,7 +412,7 @@ if [ "$ENABLE_LLM" = "true" ]; then
 
     # Wait for LLM to be ready (both llama.cpp and vLLM have /health endpoint)
     echo ""
-    if ! wait_for_http_health "LLM" "http://localhost:8000/health" "$SERVICE_TIMEOUT" "$LLM_PID"; then
+    if ! wait_for_http_health "LLM" "http://localhost:8000/v1/models" "$SERVICE_TIMEOUT" "$LLM_PID"; then
         exit 1
     fi
 fi

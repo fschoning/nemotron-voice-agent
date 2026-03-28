@@ -1,0 +1,86 @@
+services:
+  # 1. The Hearing Engine (Local DGX Spark ASR)
+  asr-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.gb10
+    image: nemotron-unified:cuda13-gb10
+    container_name: agent-asr
+    restart: unless-stopped
+    ipc: host
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=1
+      - ENABLE_ASR=true
+      - ENABLE_TTS=false
+      - ENABLE_LLM=false
+      - HF_HOME=/root/.cache/huggingface
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    volumes:
+      - ./:/workspace
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: ["bash", "/workspace/scripts/start_unified.sh"]
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+
+  # 2. The Voice Engine (Isolated Magpie TTS)
+  tts-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.isolated
+    image: magpie-isolated:latest
+    container_name: agent-tts
+    restart: unless-stopped
+    ipc: host
+    environment:
+      - NVIDIA_DISABLE_REQUIRE=1
+      - ENABLE_ASR=false
+      - ENABLE_TTS=true
+      - ENABLE_LLM=false
+      - HF_HOME=/root/.cache/huggingface
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    volumes:
+      - ./:/workspace
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: ["bash", "/workspace/scripts/start_unified.sh"]
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+
+  # 3. The Brain (Pipecat + Gemini)
+  agent-core:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: agent-core-custom:latest
+    container_name: agent-core
+    restart: always
+    ipc: host
+    network_mode: host
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_ASR_URL=ws://127.0.0.1:8080
+      - NVIDIA_TTS_URL=http://127.0.0.1:8001
+      - NVIDIA_DISABLE_REQUIRE=1
+    depends_on:
+      - asr-engine
+      - tts-engine
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]

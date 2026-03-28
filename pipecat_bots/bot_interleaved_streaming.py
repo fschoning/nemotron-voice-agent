@@ -1,21 +1,7 @@
 #!/usr/bin/env python3
 #
 # Pipecat bot with interleaved streaming for lowest latency.
-#
-# Uses buffered LLM (sentence-boundary streaming) with adaptive WebSocket TTS.
-# Single-slot operation achieves 100% KV cache reuse across turns.
-# SmartTurn analyzer for responsive turn-taking.
-#
-# Environment variables:
-#   NVIDIA_ASR_URL        ASR WebSocket URL (default: ws://localhost:8080)
-#   NVIDIA_LLAMA_CPP_URL  llama.cpp API URL (default: http://localhost:8000)
-#   NVIDIA_TTS_URL        Magpie TTS server URL (default: http://localhost:8001)
-#   ENABLE_RECORDING      Enable audio recording (default: false)
-#
-# Usage:
-#   uv run pipecat_bots/bot_interleaved_streaming.py
-#   uv run pipecat_bots/bot_interleaved_streaming.py -t daily
-#   uv run pipecat_bots/bot_interleaved_streaming.py -t webrtc
+# Modified for Gemini Cloud LLM.
 #
 
 import asyncio
@@ -40,10 +26,12 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.services.openai import OpenAILLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -51,27 +39,12 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 # Import our custom local services
 from nvidia_stt import NVidiaWebSocketSTTService
 from magpie_websocket_tts import MagpieWebSocketTTSService
-from llama_cpp_buffered_llm import LlamaCppBufferedLLMService
 from v2v_metrics import V2VMetricsProcessor
-
-
-class ContextTimingWrapper(FrameProcessor):
-    """Log when LLMMessagesFrame passes through for V2V timing investigation."""
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        if isinstance(frame, LLMMessagesFrame):
-            logger.debug(f"ContextTiming: LLMMessagesFrame at {time.time():.3f}")
-
-        await self.push_frame(frame, direction)
-
 
 load_dotenv(override=True)
 
 # Configuration from environment
 NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://localhost:8080")
-NVIDIA_LLAMA_CPP_URL = os.getenv("NVIDIA_LLAMA_CPP_URL", "http://localhost:8000")
 NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://localhost:8001")
 
 # Audio recording configuration
@@ -134,7 +107,6 @@ transport_params = {
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     logger.info("Starting interleaved streaming bot")
     logger.info(f"  ASR URL: {NVIDIA_ASR_URL}")
-    logger.info(f"  LLM URL: {NVIDIA_LLAMA_CPP_URL}")
     logger.info(f"  TTS URL: {NVIDIA_TTS_URL}")
     logger.info(f"  Transport: {type(transport).__name__}")
     logger.info(f"  Recording: {'enabled' if ENABLE_RECORDING else 'disabled'}")
@@ -204,23 +176,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     context = LLMContext(messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
-    # LLM service - buffered mode (single slot, 100% KV cache reuse)
-    llm = LlamaCppBufferedLLMService(
-        llama_url=NVIDIA_LLAMA_CPP_URL,
-        params=LlamaCppBufferedLLMService.InputParams(
-            first_segment_max_tokens=24,
-            first_segment_hard_max_tokens=24,
-            segment_max_tokens=32,
-            segment_hard_max_tokens=96,
-        ),
+    # LLM service - pointing to Gemini via OpenAI compatible API
+    llm = OpenAILLMService(
+        api_key=os.environ.get("GEMINI_API_KEY", "none"),
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        model="gemini-2.5-flash"
     )
-    logger.info("Using LlamaCppBufferedLLMService (single-slot, 100% cache)")
+    logger.info("Using Gemini 2.5 Flash via OpenAILLMService")
 
     # RTVI processor for client communication
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
-    # Context timing wrapper for V2V latency investigation
-    context_timing = ContextTimingWrapper()
 
     # Build pipeline processors
     pipeline_processors = [
@@ -228,8 +193,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         rtvi,
         stt,
         context_aggregator.user(),
-        context_timing,  # Log when LLMMessagesFrame passes through
         llm,
+        SentenceAggregator(),
         tts,
         v2v_metrics,
         transport.output(),

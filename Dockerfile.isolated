@@ -1,0 +1,36 @@
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages --no-cache-dir uv huggingface_hub
+
+# 1. Lock Torchaudio for GB10 hardware
+RUN uv pip install --system --break-system-packages --no-cache torchaudio --index-url https://download.pytorch.org/whl/cu130 --no-deps
+
+# 2. Lock NeMo to the stable January commit
+RUN git clone https://github.com/NVIDIA/NeMo.git /opt/nemo && \
+    cd /opt/nemo && git checkout 644201898480ec8c8d0a63 && \
+    uv pip install --system --break-system-packages --no-cache Cython hydra-core>=1.3.0 omegaconf>=2.3 pytorch-lightning>=2.0 && \
+    uv pip install --system --break-system-packages --no-cache -e ".[tts]"
+
+RUN uv pip install --system --break-system-packages --no-cache fastapi uvicorn[standard] pydantic>=2.0 loguru websockets soundfile
+
+WORKDIR /app
+
+# 3. Complete Isolation: COPY local pristine files instead of downloading from broken URLs
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+RUN uv pip install --system --break-system-packages --no-cache -e .
+
+# 4. Bypass the Bug: Download the specific v2512 (Pre-Hindi) model revision explicitly
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
+RUN huggingface-cli download nvidia/magpie_tts_multilingual_357m magpie_tts_multilingual_357m.nemo --revision v2512 --local-dir /app/models
+
+# 5. Force the isolated server to load from our locked local file
+RUN sed -i 's/MagpieTTSModel\.from_pretrained([^)]*)/MagpieTTSModel.restore_from("\/app\/models\/magpie_tts_multilingual_357m.nemo")/g' src/nemotron_speech/tts_server.py
+
+# 6. Ironclad PyTorch Lock for Grace-Blackwell
+RUN pip install --break-system-packages --no-cache-dir --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130 && \
+    pip install --break-system-packages --no-cache-dir "numpy<2.3"
+
+CMD ["python3", "-m", "nemotron_speech.tts_server", "--host", "0.0.0.0", "--port", "8001"]

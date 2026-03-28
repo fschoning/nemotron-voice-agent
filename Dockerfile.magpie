@@ -1,0 +1,29 @@
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages --no-cache-dir uv
+
+RUN uv pip install --system --break-system-packages --no-cache torchaudio --index-url https://download.pytorch.org/whl/cu130 --no-deps
+
+RUN git clone https://github.com/NVIDIA/NeMo.git /opt/nemo && \
+    cd /opt/nemo && git checkout 644201898480ec8c8d0a63 && \
+    uv pip install --system --break-system-packages --no-cache Cython hydra-core>=1.3.0 omegaconf>=2.3 pytorch-lightning>=2.0 && \
+    uv pip install --system --break-system-packages --no-cache -e ".[tts]"
+
+RUN uv pip install --system --break-system-packages --no-cache fastapi uvicorn[standard] pydantic>=2.0 loguru
+
+WORKDIR /workspace
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+# cleanly swap the model name BEFORE installing the package
+RUN find src -type f -name "*.py" -exec sed -i 's/nvidia\/magpie_tts_en/nvidia\/magpie_tts_multilingual_357m/g' {} +
+
+RUN uv pip install --system --break-system-packages --no-cache -e .
+RUN mkdir -p /workspace/models
+
+# THE IRONCLAD LOCK
+RUN pip install --break-system-packages --no-cache-dir --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130 && \
+    pip install --break-system-packages --no-cache-dir "numpy<2.3"
+
+CMD ["python3", "-m", "nemotron_speech.tts_server", "--host", "0.0.0.0", "--port", "8001"]
