@@ -376,15 +376,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         tts = MistralCloudTTSService(
             api_key=os.environ.get("MISTRAL_API_KEY"),
             model="voxtral-mini-tts-2603",
-            voice="paul" # Testing 'paul' without -neutral suffix
-            # Available Mistral/Voxtral Voices (Table variations):
-            # - paul / paul-neutral
-            # - margaret / margaret-expressive
-            # - oliver / oliver-neutral
-            # - marie / marie-neutral
-            # - angele / angele-soft
-            # - gustavo / gustavo-natural
-            # - sanchit / sanchit-neutral
+            voice=os.environ.get("MISTRAL_VOICE_ID", "paul")
         )
 
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
