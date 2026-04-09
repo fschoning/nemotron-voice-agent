@@ -3,6 +3,12 @@ import asyncio
 import json
 import os
 import sys
+import os
+from pathlib import Path
+
+# Add project root to sys.path to allow importing from pipecat_bots
+sys.path.append(str(Path(__file__).parent.parent))
+
 import wave
 from datetime import datetime
 from io import BytesIO
@@ -32,7 +38,7 @@ from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIPro
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 
-from pipecat.services.google import GoogleLLMService
+from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
