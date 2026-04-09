@@ -242,7 +242,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-3.1-flash-preview", # Upgraded to the latest 3.1 Flash Preview
+        model="gemini-2.5-flash", # Reverted to 2.5-flash as 3.1-preview is 404 in this region/API version
         run_in_parallel=False
     )
 
