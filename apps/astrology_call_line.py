@@ -239,7 +239,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-1.5-flash", # Reverted to 1.5-flash for guaranteed stability
+        model="gemini-2.0-flash-exp", # Switched to -exp for broader availability
         run_in_parallel=False
     )
 
@@ -299,8 +299,25 @@ async def bot(runner_args: RunnerArguments):
         mcp_task.cancel()
 
 if __name__ == "__main__":
+    from pipecat.runner.run import RunnerArguments
+    
+    # Check key before any heavy imports
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
         print("\n💥 FATAL ERROR: GEMINI_API_KEY is missing or empty!\n")
         sys.exit(1)
-    from pipecat.runner.run import main
-    main()
+
+    # Parse command line arguments manually to avoid pipecat.runner.run.main() clobbering logs
+    args = RunnerArguments.from_command_line()
+    
+    # FOR GOD'S SAKE, SILENCE THE LOGS.
+    # We do this here, after RunnerArguments has potentially touched logging.
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", filter=lambda record: 
+               "pipecat.transports.smallwebrtc" not in record["name"] and 
+               "pipecat.runner" not in record["name"] and
+               "pipecat.services" not in record["name"])
+    
+    try:
+        asyncio.run(bot(args))
+    except (KeyboardInterrupt, SystemExit):
+        pass
