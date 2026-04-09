@@ -107,3 +107,26 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, compute, utility]
+
+  # 5. The Vedic Astrologer Application
+  agent-astrologer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent-astrologer
+    restart: always
+    ipc: host
+    network_mode: host
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_ASR_URL=ws://127.0.0.1:8080
+      - NVIDIA_TTS_URL=http://127.0.0.1:8001
+      - ACTIVE_TTS=magpie
+    volumes:
+      # Maps your local apps folder into the container for hot-reloading
+      - ./apps:/app/apps
+    depends_on:
+      - asr-engine
+      - tts-engine
+    # Executes the python module directly
+    command: ["python3", "-m", "apps.astrology_call_line"]
