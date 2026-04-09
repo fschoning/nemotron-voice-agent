@@ -41,48 +41,54 @@ from pipecat.runner.utils import create_transport
 import logging
 import os
 import sys
+import base64
 from typing import AsyncGenerator
+from mistralai.client import Mistral
 
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.tts_service import TTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.frames.frames import AudioRawFrame, ErrorFrame, Frame
-from openai import AsyncOpenAI
 
 # Use a dedicated name for the standard logger to avoid shadowing loguru.logger
 pipelog = logging.getLogger("pipecat")
 
-# A dedicated Mistral Cloud TTS service that bypasses Pipecat's 
-# internal OpenAI voice mapping to resolve the 'Paul' KeyError.
+# A dedicated Mistral Cloud TTS service using the official mistralai SDK.
 class MistralCloudTTSService(TTSService):
-    def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "Paul", **kwargs):
+    def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "paul-neutral", **kwargs):
         super().__init__(**kwargs)
-        # We use the standard OpenAI client but pointed at Mistral's cloud endpoint.
-        # This allows us to use any voice ID (Paul, Marie, etc.) without library-level validation.
-        self._client = AsyncOpenAI(api_key=api_key, base_url="https://api.mistral.ai/v1")
+        # Initialize the official Mistral client
+        self._client = Mistral(api_key=api_key)
         self._model = model
         self._voice = voice
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
-        pipelog.debug(f"Streaming Mistral TTS for: {text[:40]}...")
+        pipelog.debug(f"Calling Mistral Voxtral SDK for: {text[:40]}...")
         try:
-            # Mistral Voxtral API is OpenAI-compatible for audio/speech.
-            # We request 'pcm' to match Pipecat's default expected format (raw audio).
-            response = await self._client.audio.speech.create(
-                model=self._model,
-                voice=self._voice,
-                input=text,
-                response_format="pcm" 
-            )
+            # We call the synchronous SDK method in a thread to avoid blocking the event loop.
+            def _call_sdk():
+                return self._client.audio.speech.complete(
+                    model=self._model,
+                    input=text,
+                    voice_id=self._voice,
+                    # We request PCM to get raw audio data directly
+                    response_format="pcm" 
+                )
             
-            # Use chunks for streaming response
-            async for chunk in response.iter_bytes(chunk_size=1024):
-                yield AudioRawFrame(audio=chunk, sample_rate=24000, num_channels=1)
+            response = await asyncio.to_thread(_call_sdk)
+            
+            # The Voxtral SDK returns audio_data as a base64 encoded string
+            if hasattr(response, "audio_data") and response.audio_data:
+                audio_bytes = base64.b64decode(response.audio_data)
+                # Yield as raw PCM. Voxtral default is 24kHz.
+                yield AudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+            else:
+                pipelog.error("Mistral Voxtral SDK returned no audio data.")
                 
         except Exception as e:
-            pipelog.error(f"Mistral TTS API Error: {e}")
-            yield ErrorFrame(f"Mistral TTS Error: {e}")
+            pipelog.error(f"Mistral Voxtral SDK Error: {e}")
+            yield ErrorFrame(f"Mistral Error: {e}")
 
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
@@ -242,20 +248,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         logger.info("🎙️ Using Magpie WebSocket TTS (Local)")
         tts = MagpieWebSocketTTSService(server_url=NVIDIA_TTS_URL)
     else:
-        logger.info("☁️ Using Mistral Cloud TTS (Voxtral)")
-        # If a native MistralTTSService was added recently to the lib, use it.
-        # Otherwise use our resilient OpenAI-compatible wrapper.
+        pipelog.info("☁️ Using Mistral Cloud TTS (Voxtral)")
         tts = MistralCloudTTSService(
             api_key=os.environ.get("MISTRAL_API_KEY"),
-            model="voxtral-mini-tts-2603", # User-verified model ID for Voxtral Cloud
-            voice="Paul", # Mistral's default neutral voice
-            base_url="https://api.mistral.ai/v1"
-            # Available Mistral/Voxtral Voices:
-            # - Paul (English - US) - Default
-            # - Margaret (English - US)
-            # - Oliver (English - UK)
-            # - Marie (French)
-            # - Sanchit, Angele, Gustavo, Khyathi, Nick, Yassir, Patrick
+            model="voxtral-mini-tts-2603",
+            voice="paul-neutral" # Verified preset ID from Mistral SDK docs
         )
 
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
