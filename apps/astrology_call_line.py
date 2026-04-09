@@ -481,6 +481,7 @@ async def bot(runner_args: RunnerArguments):
 
 if __name__ == "__main__":
     import argparse
+    import requests
     
     # Check keys before any heavy imports
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
@@ -495,6 +496,28 @@ if __name__ == "__main__":
     # 2. Set an environment variable as a side-channel to the bot() function
     if args.magpie:
         os.environ["USE_MAGPIE"] = "true"
+    else:
+        # Voice Selector
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if api_key:
+            try:
+                print("🔍 Fetching Mistral voices...")
+                res = requests.get("https://api.mistral.ai/v1/audio/voices", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+                if res.status_code == 200:
+                    voices = res.json().get("items", [])
+                    print("\n--- Available Mistral Voices ---")
+                    for i, v in enumerate(voices):
+                        print(f"[{i+1}] {v.get('name')} ({v.get('id')})")
+                    
+                    choice = input("\nSelect a voice number (or press Enter for Paul - Neutral): ")
+                    if choice.strip().isdigit():
+                        idx = int(choice.strip()) - 1
+                        if 0 <= idx < len(voices):
+                            selected_voice = voices[idx]['id']
+                            print(f"✅ Selected: {voices[idx]['name']} ({selected_voice})\n")
+                            os.environ["MISTRAL_VOICE_ID"] = selected_voice
+            except Exception as e:
+                print(f"⚠️ Failed to fetch voices for selector: {e}")
         
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
@@ -502,3 +525,4 @@ if __name__ == "__main__":
     # 4. Start the standard runner
     from pipecat.runner.run import main
     main()
+
