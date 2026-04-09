@@ -38,12 +38,9 @@ from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIPro
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 
-import logging
-import os
-import sys
 import base64
+import httpx
 from typing import AsyncGenerator
-from mistralai.client import Mistral
 
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.google.llm import GoogleLLMService
@@ -54,40 +51,47 @@ from pipecat.frames.frames import AudioRawFrame, ErrorFrame, Frame
 # Use a dedicated name for the standard logger to avoid shadowing loguru.logger
 pipelog = logging.getLogger("pipecat")
 
-# A dedicated Mistral Cloud TTS service using the official mistralai SDK.
+# A dedicated Mistral Cloud TTS service using direct API calls (SDK-less).
 class MistralCloudTTSService(TTSService):
     def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "paul-neutral", **kwargs):
         super().__init__(**kwargs)
-        # Initialize the official Mistral client
-        self._client = Mistral(api_key=api_key)
+        self._api_key = api_key
         self._model = model
         self._voice = voice
+        self._url = "https://api.mistral.ai/v1/audio/speech"
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
-        pipelog.debug(f"Calling Mistral Voxtral SDK for: {text[:40]}...")
+        pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
         try:
-            # We call the synchronous SDK method in a thread to avoid blocking the event loop.
-            def _call_sdk():
-                return self._client.audio.speech.complete(
-                    model=self._model,
-                    input=text,
-                    voice_id=self._voice,
-                    # We request PCM to get raw audio data directly
-                    response_format="pcm" 
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self._url,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "model": self._model,
+                        "input": text,
+                        "voice_id": self._voice,
+                        "response_format": "pcm"
+                    },
+                    timeout=30.0
                 )
-            
-            response = await asyncio.to_thread(_call_sdk)
-            
-            # The Voxtral SDK returns audio_data as a base64 encoded string
-            if hasattr(response, "audio_data") and response.audio_data:
-                audio_bytes = base64.b64decode(response.audio_data)
-                # Yield as raw PCM. Voxtral default is 24kHz.
-                yield AudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
-            else:
-                pipelog.error("Mistral Voxtral SDK returned no audio data.")
+                
+                if response.status_code != 200:
+                    pipelog.error(f"Mistral API Error ({response.status_code}): {response.text}")
+                    yield ErrorFrame(f"Mistral Error: {response.text}")
+                    return
+
+                data = response.json()
+                # The Voxtral API returns audio_data as a base64 encoded string
+                if "audio_data" in data and data["audio_data"]:
+                    audio_bytes = base64.b64decode(data["audio_data"])
+                    # Yield as raw PCM. Voxtral default is 24kHz.
+                    yield AudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+                else:
+                    pipelog.error("Mistral Voxtral API returned no audio data.")
                 
         except Exception as e:
-            pipelog.error(f"Mistral Voxtral SDK Error: {e}")
+            pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
             yield ErrorFrame(f"Mistral Error: {e}")
 
 from pipecat.transports.base_transport import BaseTransport, TransportParams
