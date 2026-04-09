@@ -218,6 +218,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             tts = OpenAITTSService(
                 api_key=os.environ.get("MISTRAL_API_KEY"),
                 model="voxtral-mini-tts-2603", # User-verified model ID for Voxtral Cloud
+                voice="aria", # Mistral's default expressive voice
                 base_url="https://api.mistral.ai/v1"
             )
 
