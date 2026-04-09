@@ -22,6 +22,7 @@ from pipecat.frames.frames import (
     Frame,
     InterimTranscriptionFrame,
     MetricsFrame,
+    InputAudioRawFrame,
     StartFrame,
     TranscriptionFrame,
     UserStartedSpeakingFrame,
@@ -196,6 +197,13 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
                 await self._send_reset(finalize=True)
                 return  # Don't pass through yet
             # If not waiting for final, pass through normally
+            await super().process_frame(frame, direction)
+            return
+
+        # Swallow raw audio frames - they don't need to go downstream to the LLM/Aggregator.
+        # This also prevents "StartFrame not received yet" errors in downstream processors
+        # if the transport starts pushing audio before the pipeline has fully initialized.
+        if isinstance(frame, InputAudioRawFrame):
             await super().process_frame(frame, direction)
             return
 
