@@ -50,7 +50,8 @@ from pipecat.services.llm_service import FunctionCallParams
 from pipecat.frames.frames import AudioRawFrame, ErrorFrame, Frame
 from openai import AsyncOpenAI
 
-logger = logging.getLogger("pipecat")
+# Use a dedicated name for the standard logger to avoid shadowing loguru.logger
+pipelog = logging.getLogger("pipecat")
 
 # A dedicated Mistral Cloud TTS service that bypasses Pipecat's 
 # internal OpenAI voice mapping to resolve the 'Paul' KeyError.
@@ -64,7 +65,7 @@ class MistralCloudTTSService(TTSService):
         self._voice = voice
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
-        logger.debug(f"Streaming Mistral TTS for: {text[:40]}...")
+        pipelog.debug(f"Streaming Mistral TTS for: {text[:40]}...")
         try:
             # Mistral Voxtral API is OpenAI-compatible for audio/speech.
             # We request 'pcm' to match Pipecat's default expected format (raw audio).
@@ -80,7 +81,7 @@ class MistralCloudTTSService(TTSService):
                 yield AudioRawFrame(audio=chunk, sample_rate=24000, num_channels=1)
                 
         except Exception as e:
-            logger.error(f"Mistral TTS API Error: {e}")
+            pipelog.error(f"Mistral TTS API Error: {e}")
             yield ErrorFrame(f"Mistral TTS Error: {e}")
 
 from pipecat.transports.base_transport import BaseTransport, TransportParams
