@@ -41,36 +41,42 @@ from pipecat.runner.utils import create_transport
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.tts import OpenAITTSService
-try:
-    from pipecat.services.mistral import MistralTTSService
-except ImportError:
-    MistralTTSService = None
+from pipecat.services.openai import OpenAITTSService
+from pipecat.services.google.llm import GoogleLLMService
+from pipecat.services.ai_services import TTSService
+from pipecat.frames.frames import AudioRawFrame, ErrorFrame
+from openai import AsyncOpenAI
 
-# A custom wrapper to allow Mistral Voxtral voices (Paul, Marie, etc.) 
-# by bypassing Pipecat's hardcoded OpenAI voice validation.
-class MistralCloudTTSService(OpenAITTSService):
-    def __init__(self, **kwargs):
+# A dedicated Mistral Cloud TTS service that bypasses Pipecat's 
+# internal OpenAI voice mapping to resolve the 'Paul' KeyError.
+class MistralCloudTTSService(TTSService):
+    def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "Paul", **kwargs):
         super().__init__(**kwargs)
-        # Mistral uses different voice names than OpenAI. To prevent a KeyError/crash
-        # during frame processing, we inject them into the internal voice mapping.
-        # We try both class-level and instance-level attributes to be version-resilient.
-        mistral_voices = [
-            "Paul", "Margaret", "Oliver", "Marie", "Sanchit", 
-            "Angele", "Gustavo", "Khyathi", "Nick", "Yassir", "Patrick"
-        ]
-        
-        # version-resilient injection
-        for target in [self, type(self), OpenAITTSService]:
-            for attr_name in ["_voices", "VOICES", "voices"]:
-                attr = getattr(target, attr_name, None)
-                if isinstance(attr, dict):
-                    for v in mistral_voices:
-                        if v not in attr:
-                            attr[v] = v
-                elif isinstance(attr, list):
-                    for v in mistral_voices:
-                        if v not in attr:
-                            attr.append(v)
+        # We use the standard OpenAI client but pointed at Mistral's cloud endpoint.
+        # This allows us to use any voice ID (Paul, Marie, etc.) without library-level validation.
+        self._client = AsyncOpenAI(api_key=api_key, base_url="https://api.mistral.ai/v1")
+        self._model = model
+        self._voice = voice
+
+    async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
+        logger.debug(f"Streaming Mistral TTS for: {text[:40]}...")
+        try:
+            # Mistral Voxtral API is OpenAI-compatible for audio/speech.
+            # We request 'pcm' to match Pipecat's default expected format (raw audio).
+            response = await self._client.audio.speech.create(
+                model=self._model,
+                voice=self._voice,
+                input=text,
+                response_format="pcm" 
+            )
+            
+            # Stream the raw PCM chunks directly into the pipeline
+            async for chunk in response.iter_bytes(chunk_size=1024):
+                yield AudioRawFrame(audio=chunk, sample_rate=24000, num_channels=1)
+                
+        except Exception as e:
+            logger.error(f"Mistral TTS API Error: {e}")
+            yield ErrorFrame(f"Mistral TTS Error: {e}")
 
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
