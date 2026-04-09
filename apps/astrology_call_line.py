@@ -58,6 +58,17 @@ ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 VAD_STOP_SECS = 0.2
 
+# --- Pipeline Swallower ---
+class AudioSwallower(FrameProcessor):
+    """Silently swallows raw audio frames before they reach the LLM aggregator.
+    This prevents 'StartFrame not received' errors caused by transports 
+    warming up and streaming audio before the pipeline officially starts.
+    """
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, InputAudioRawFrame):
+            return
+        await super().process_frame(frame, direction)
+
 # --- Global State ---
 mcp_session = None
 mcp_ready_event = asyncio.Event()
@@ -242,7 +253,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     pipeline_processors = [
-        transport.input(), rtvi, stt, context_aggregator.user(), llm,
+        transport.input(), rtvi, stt, AudioSwallower(), context_aggregator.user(), llm,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
