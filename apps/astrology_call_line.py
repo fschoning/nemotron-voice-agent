@@ -16,11 +16,6 @@ from dotenv import load_dotenv
 from loguru import logger
 import logging
 
-# Early suppression of Pipecat dependency loggers (aiortc, etc)
-logging.getLogger("aiortc").setLevel(logging.WARNING)
-logging.getLogger("aiohttp").setLevel(logging.WARNING)
-logging.getLogger("pipecat").setLevel(logging.INFO)
-
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
@@ -56,11 +51,6 @@ from pipecat_bots.v2v_metrics import V2VMetricsProcessor
 from apps.prompts.vedic_astrologer import VEDIC_ASTROLOGER_AUDIO_PROMPT
 
 load_dotenv(override=True)
-
-# --- Logging Configuration ---
-# Suppress noisy WebRTC and transport debug logs
-logger.remove()
-logger.add(sys.stderr, level="INFO", filter=lambda record: "pipecat.transports.smallwebrtc" not in record["name"] and "pipecat.runner" not in record["name"])
 
 NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://127.0.0.1:8080")
 NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://127.0.0.1:8001")
@@ -239,7 +229,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.0-flash-exp", # Switched to -exp for broader availability
+        model="gemini-1.5-flash-latest", # Using -latest for maximum compatibility across API versions
         run_in_parallel=False
     )
 
@@ -282,6 +272,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     await runner.run(task)
 
 async def bot(runner_args: RunnerArguments):
+    # FOR GOD'S SAKE, SILENCE THE LOGS.
+    # We do this here, INSIDE the bot function, because pipecat.runner.run.main() 
+    # clobbers any logging setup done at the module level.
+    logging.getLogger("aiortc").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("pipecat").setLevel(logging.INFO)
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", filter=lambda record: 
+               "pipecat.transports.smallwebrtc" not in record["name"] and 
+               "pipecat.runner" not in record["name"] and
+               "pipecat.services" not in record["name"])
+
     # Idiomatic Pipecat Init: Dependencies first, Transport second, Task third.
     global tool_call_queue
     tool_call_queue = asyncio.Queue()
@@ -299,25 +301,8 @@ async def bot(runner_args: RunnerArguments):
         mcp_task.cancel()
 
 if __name__ == "__main__":
-    from pipecat.runner.run import RunnerArguments
-    
-    # Check key before any heavy imports
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
         print("\n💥 FATAL ERROR: GEMINI_API_KEY is missing or empty!\n")
         sys.exit(1)
-
-    # Parse command line arguments manually to avoid pipecat.runner.run.main() clobbering logs
-    args = RunnerArguments.from_command_line()
-    
-    # FOR GOD'S SAKE, SILENCE THE LOGS.
-    # We do this here, after RunnerArguments has potentially touched logging.
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", filter=lambda record: 
-               "pipecat.transports.smallwebrtc" not in record["name"] and 
-               "pipecat.runner" not in record["name"] and
-               "pipecat.services" not in record["name"])
-    
-    try:
-        asyncio.run(bot(args))
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    from pipecat.runner.run import main
+    main()
