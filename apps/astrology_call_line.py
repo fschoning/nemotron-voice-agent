@@ -42,7 +42,6 @@ import base64
 import httpx
 from typing import AsyncGenerator
 
-from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.tts_service import TTSService
 from pipecat.services.llm_service import FunctionCallParams
@@ -98,41 +97,38 @@ class MistralCloudTTSService(TTSService):
                     pipelog.info(f"✅ Found {len(voices)} voices.")
                     # 1. Try exact ID match
                     for v in voices:
-                        if v.get('id') == self._requested_voice:
-                            self._active_voice = v.get('id')
-                            break
-                    
+                        if v.get("id") == self._requested_voice:
+                            self._active_voice = v.get("id")
+                            pipelog.info(f"🎤 Using voice: {v.get('name')} ({self._active_voice})")
+                            return
+
                     # 2. Try exact Name match
-                    if not self._active_voice:
-                        for v in voices:
-                            if v.get('name').lower() == self._requested_voice.lower():
-                                self._active_voice = v.get('id')
-                                break
-                    
+                    for v in voices:
+                        if v.get("name") == self._requested_voice:
+                            self._active_voice = v.get("id")
+                            pipelog.info(f"🎤 Using voice: {v.get('name')} ({self._active_voice})")
+                            return
+
                     # 3. Try partial Name match
-                    if not self._active_voice:
-                        for v in voices:
-                            if self._requested_voice.lower() in v.get('name', '').lower():
-                                self._active_voice = v.get('id')
-                                break
+                    for v in voices:
+                        if self._requested_voice.lower() in v.get("name", "").lower():
+                            self._active_voice = v.get("id")
+                            pipelog.info(f"🎤 Using voice: {v.get('name')} ({self._active_voice})")
+                            return
                     
-                    if self._active_voice:
-                        # Find the name for logging
-                        v_name = next((v.get('name') for v in voices if v.get('id') == self._active_voice), "Unknown")
-                        pipelog.info(f"🎤 Using voice: {v_name} ({self._active_voice})")
-                    else:
-                        self._active_voice = voices[0]['id']
-                        pipelog.warning(f"⚠️ Requested voice not found. Falling back to: {self._active_voice}")
+                    # 4. Fallback to first
+                    self._active_voice = voices[0].get("id")
+                    pipelog.warning(f"Voice '{self._requested_voice}' not found. Falling back to: {voices[0].get('name')} ({self._active_voice})")
                 else:
-                    pipelog.error("❌ Mistral voice list is empty.")
+                    pipelog.error("No voices found in Mistral API response.")
             else:
-                pipelog.error(f"❌ Failed to discover voices ({response.status_code}): {response.text}")
+                pipelog.error(f"Failed to fetch Mistral voices: {response.status_code} {response.text}")
         except Exception as e:
-            pipelog.error(f"❌ Error during voice discovery: {e}")
-        
-        # Final fallback to keep the service alive
+            pipelog.error(f"Error during Mistral voice discovery: {e}")
+            
         if not self._active_voice:
-            self._active_voice = self._requested_voice
+            self._active_voice = "c69964a6-ab8b-4f8a-9465-ec0925096ec8" # Hard fallback
+            pipelog.warning(f"Using default Paul voice ID: {self._active_voice}")
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
         # Ensure we have a valid voice ID before calling speech API
@@ -400,7 +396,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.5-flash", # Reverted to 2.5-flash as 3.1-preview is 404 in this region/API version
+        model="gemini-2.0-flash", 
         run_in_parallel=False
     )
 
@@ -483,41 +479,55 @@ if __name__ == "__main__":
     # 1. Parse our custom flags first
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--magpie", action="store_true")
+    parser.add_argument("--voice-selector", action="store_true")
     args, unknown = parser.parse_known_args()
     
     # 2. Set an environment variable as a side-channel to the bot() function
     if args.magpie:
         os.environ["USE_MAGPIE"] = "true"
-    else:
-        # Voice Selector
+    elif args.voice_selector:
+        # Standalone Voice Selector Mode (Used by start.sh)
         api_key = os.getenv("MISTRAL_API_KEY")
-        if api_key and sys.stdin.isatty():
-            try:
-                print("🔍 Fetching Mistral voices...")
-                # Increase limit to 100 to show all voices
-                res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=100", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
-                if res.status_code == 200:
-                    voices = res.json().get("items", [])
-                    print("\n--- Available Mistral Voices ---")
-                    for i, v in enumerate(voices):
-                        print(f"[{i+1}] {v.get('name')} ({v.get('id')})")
-                    
-                    sys.stdout.flush()
-                    try:
-                        choice = input("\nSelect a voice number (or press Enter for Paul - Neutral): ")
-                        if choice.strip().isdigit():
-                            idx = int(choice.strip()) - 1
+        if not api_key:
+            sys.exit(0)
+        try:
+            res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=100", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+            if res.status_code == 200:
+                voices = res.json().get("items", [])
+                print("\n--- Available Mistral Voices ---", file=sys.stderr)
+                for i, v in enumerate(voices):
+                    print(f"[{i+1}] {v.get('name')} ({v.get('id')})", file=sys.stderr)
+                
+                print("\nSelect a voice number (or press Enter for Paul - Neutral): ", end="", file=sys.stderr)
+                sys.stderr.flush()
+                choice = sys.stdin.readline().strip()
+                if choice.isdigit():
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(voices):
+                        # Output ONLY the ID to stdout so start.sh can capture it
+                        print(voices[idx]['id'])
+        except Exception:
+            pass
+        sys.exit(0)
+    else:
+        # Standard run - check if MISTRAL_VOICE_ID was already provided (e.g. by start.sh)
+        if not os.getenv("MISTRAL_VOICE_ID") and sys.stdin.isatty():
+             # Fallback for direct python runs without start.sh
+             api_key = os.getenv("MISTRAL_API_KEY")
+             if api_key:
+                try:
+                    res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=100", headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
+                    if res.status_code == 200:
+                        voices = res.json().get("items", [])
+                        print("\n--- Available Mistral Voices ---")
+                        for i, v in enumerate(voices):
+                            print(f"[{i+1}] {v.get('name')} ({v.get('id')})")
+                        choice = input("\nSelect a voice (Enter for default): ").strip()
+                        if choice.isdigit():
+                            idx = int(choice) - 1
                             if 0 <= idx < len(voices):
-                                selected_voice = voices[idx]['id']
-                                print(f"✅ Selected: {voices[idx]['name']} ({selected_voice})\n")
-                                os.environ["MISTRAL_VOICE_ID"] = selected_voice
-                    except EOFError:
-                        print("\n⚠️ Non-interactive terminal detected. Using default voice.")
-            except Exception as e:
-                print(f"⚠️ Failed to fetch voices for selector: {e}")
-        elif api_key:
-            print("ℹ️ Non-interactive terminal - skipping voice selector.")
-
+                                os.environ["MISTRAL_VOICE_ID"] = voices[idx]['id']
+                except: pass
         
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
@@ -525,4 +535,3 @@ if __name__ == "__main__":
     # 4. Start the standard runner
     from pipecat.runner.run import main
     main()
-

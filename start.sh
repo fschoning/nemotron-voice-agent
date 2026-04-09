@@ -35,12 +35,18 @@ else
     echo "⚠️ Warning: .venv not found. Running with system python."
 fi
 
+echo "🚀 Initializing voice selection..."
+# Run the standalone selector first to capture a choice
+# This remains interactive because it's not nohup'ed yet.
+export MISTRAL_VOICE_ID=$(python3 apps/astrology_call_line.py --voice-selector)
+
 echo "🚀 Starting Vedic Astrology Call Line..."
 echo "Log file: $LOG_FILE"
 
 # Start the bot in the background
-# Use nohup to keep it running and redirect output to log
+# Pass MISTRAL_VOICE_ID environment variable into the nohup session
 nohup python3 apps/astrology_call_line.py > "$LOG_FILE" 2>&1 &
+
 BOT_PID=$!
 
 # Save PID
