@@ -46,6 +46,7 @@ from typing import AsyncGenerator
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.tts_service import TTSService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.frames.frames import AudioRawFrame, ErrorFrame, Frame
 from openai import AsyncOpenAI
 
@@ -74,7 +75,7 @@ class MistralCloudTTSService(TTSService):
                 response_format="pcm" 
             )
             
-            # Stream the raw PCM chunks directly into the pipeline
+            # Use chunks for streaming response
             async for chunk in response.iter_bytes(chunk_size=1024):
                 yield AudioRawFrame(audio=chunk, sample_rate=24000, num_channels=1)
                 
