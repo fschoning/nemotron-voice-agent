@@ -217,7 +217,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         else:
             tts = OpenAITTSService(
                 api_key=os.environ.get("MISTRAL_API_KEY"),
-                model="mistral-tts",
+                model="voxtral-tts-latest", # Corrected model ID for Mistral Voxtral Cloud
                 base_url="https://api.mistral.ai/v1"
             )
 
