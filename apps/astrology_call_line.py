@@ -200,16 +200,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     active_tts = os.getenv("ACTIVE_TTS", "magpie").lower()
     if active_tts == "voxtral":
         voxtral_url = os.getenv("VOXTRAL_TTS_URL", "http://127.0.0.1:8002/v1")
-    # Select TTS provider based on command line arguments
+    # Select TTS provider based on environment variable (set via CLI in main)
     # Default is Mistral Cloud (Voxtral), swappable to Magpie with --magpie flag
-    if getattr(runner_args, "magpie", False):
+    if os.getenv("USE_MAGPIE") == "true":
         logger.info("🎙️ Using Magpie WebSocket TTS (Local)")
-        tts = MagpieWebSocketTTSService(
-            server_url=NVIDIA_TTS_URL, voice="aria", language="en",
-            params=MagpieWebSocketTTSService.InputParams(
-                language="en", streaming_preset="conservative", use_adaptive_mode=True
-            ),
-        )
+        tts = MagpieWebSocketTTSService(server_url=NVIDIA_TTS_URL)
     else:
         logger.info("☁️ Using Mistral Cloud TTS (Voxtral)")
         # If the native MistralTTSService is available in this version of Pipecat, use it.
@@ -319,19 +314,25 @@ async def bot(runner_args: RunnerArguments):
         mcp_task.cancel()
 
 if __name__ == "__main__":
-    from pipecat.runner.run import RunnerArguments
+    import argparse
     
     # Check keys before any heavy imports
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
         print("\n💥 FATAL ERROR: GEMINI_API_KEY is missing or empty!\n")
         sys.exit(1)
 
-    # Configure custom command line arguments for TTS switching
-    parser = RunnerArguments.add_argument_group("Vedic Astrology Bot Settings")
-    parser.add_argument("--magpie", action="store_true", help="Force local Magpie TTS instead of Mistral Cloud")
+    # 1. Parse our custom flags first
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--magpie", action="store_true")
+    args, unknown = parser.parse_known_args()
     
-    # Parse command line and initialize bot
-    args = RunnerArguments.from_command_line()
-    
+    # 2. Set an environment variable as a side-channel to the bot() function
+    if args.magpie:
+        os.environ["USE_MAGPIE"] = "true"
+        
+    # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
+    sys.argv = [sys.argv[0]] + unknown
+
+    # 4. Start the standard runner
     from pipecat.runner.run import main
     main()
