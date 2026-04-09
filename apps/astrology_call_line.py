@@ -491,25 +491,33 @@ if __name__ == "__main__":
     else:
         # Voice Selector
         api_key = os.getenv("MISTRAL_API_KEY")
-        if api_key:
+        if api_key and sys.stdin.isatty():
             try:
                 print("🔍 Fetching Mistral voices...")
-                res = requests.get("https://api.mistral.ai/v1/audio/voices", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+                # Increase limit to 100 to show all voices
+                res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=100", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
                 if res.status_code == 200:
                     voices = res.json().get("items", [])
                     print("\n--- Available Mistral Voices ---")
                     for i, v in enumerate(voices):
                         print(f"[{i+1}] {v.get('name')} ({v.get('id')})")
                     
-                    choice = input("\nSelect a voice number (or press Enter for Paul - Neutral): ")
-                    if choice.strip().isdigit():
-                        idx = int(choice.strip()) - 1
-                        if 0 <= idx < len(voices):
-                            selected_voice = voices[idx]['id']
-                            print(f"✅ Selected: {voices[idx]['name']} ({selected_voice})\n")
-                            os.environ["MISTRAL_VOICE_ID"] = selected_voice
+                    sys.stdout.flush()
+                    try:
+                        choice = input("\nSelect a voice number (or press Enter for Paul - Neutral): ")
+                        if choice.strip().isdigit():
+                            idx = int(choice.strip()) - 1
+                            if 0 <= idx < len(voices):
+                                selected_voice = voices[idx]['id']
+                                print(f"✅ Selected: {voices[idx]['name']} ({selected_voice})\n")
+                                os.environ["MISTRAL_VOICE_ID"] = selected_voice
+                    except EOFError:
+                        print("\n⚠️ Non-interactive terminal detected. Using default voice.")
             except Exception as e:
                 print(f"⚠️ Failed to fetch voices for selector: {e}")
+        elif api_key:
+            print("ℹ️ Non-interactive terminal - skipping voice selector.")
+
         
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
