@@ -26,7 +26,8 @@ from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, LLMRunFrame, StartFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -58,6 +59,22 @@ MCP_SERVER_URL = "http://192.168.1.121:16080/mcp/sse"
 ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 VAD_STOP_SECS = 0.2
+
+# --- Pipeline Gater ---
+class StartFrameGater(FrameProcessor):
+    def __init__(self):
+        super().__init__()
+        self._started = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, StartFrame):
+            self._started = True
+        
+        # Swallow problematic frames if we haven't officially started
+        if not self._started and isinstance(frame, InputAudioRawFrame):
+            return
+            
+        await self.push_frame(frame, direction)
 
 # --- Global State ---
 mcp_session = None
@@ -264,7 +281,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     pipeline_processors = [
-        transport.input(), rtvi, stt, context_aggregator.user(), llm,
+        transport.input(), StartFrameGater(), rtvi, stt, context_aggregator.user(), llm,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
