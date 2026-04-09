@@ -322,7 +322,9 @@ async def call_mcp_tool(tool_name: str, args: dict):
         logger.warning(f"⚠️ Tool call {tool_name} was interrupted.")
         raise
     except Exception as e:
-        logger.error(f"❌ MCP Tool Error ({tool_name}): {e}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"❌ MCP Tool Error ({tool_name}): {e}\n{error_details}")
         return {"error": f"Error executing tool: {str(e)}"}
 
 transport_params = {
@@ -390,8 +392,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S-%f")
             await save_audio_file(audio, sample_rate, num_channels, RECORDINGS_DIR / f"{timestamp}.wav")
 
+    current_date = datetime.now().strftime("%A, %B %d, %Y")
+    current_time = datetime.now().strftime("%H:%M")
+    full_prompt = f"{VEDIC_ASTROLOGER_AUDIO_PROMPT}\n\n**IMPORTANT SESSION CONTEXT:** Today is {current_date}, and the current time is {current_time}. Use this to determine current transits and dasha periods accurately."
+
     messages = [
-        {"role": "system", "content": VEDIC_ASTROLOGER_AUDIO_PROMPT},
+        {"role": "system", "content": full_prompt},
         {"role": "user", "content": "A new caller has connected to the line. Please greet them warmly, state your identity as the Vedic Astrologer, and ask for their birth details to begin."},
     ]
 
