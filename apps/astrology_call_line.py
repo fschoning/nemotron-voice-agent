@@ -41,6 +41,10 @@ from pipecat.runner.utils import create_transport
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.tts import OpenAITTSService
+try:
+    from pipecat.services.mistral import MistralTTSService
+except ImportError:
+    MistralTTSService = None
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -196,17 +200,31 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     active_tts = os.getenv("ACTIVE_TTS", "magpie").lower()
     if active_tts == "voxtral":
         voxtral_url = os.getenv("VOXTRAL_TTS_URL", "http://127.0.0.1:8002/v1")
-        tts = OpenAITTSService(
-            api_key=os.getenv("OPENAI_API_KEY", "dummy_key"),
-            base_url=voxtral_url, model="mistralai/Voxtral-4B-TTS-2603", voice="casual_female"
-        )
-    else:
+    # Select TTS provider based on command line arguments
+    # Default is Mistral Cloud (Voxtral), swappable to Magpie with --magpie flag
+    if getattr(runner_args, "magpie", False):
+        logger.info("🎙️ Using Magpie WebSocket TTS (Local)")
         tts = MagpieWebSocketTTSService(
             server_url=NVIDIA_TTS_URL, voice="aria", language="en",
             params=MagpieWebSocketTTSService.InputParams(
                 language="en", streaming_preset="conservative", use_adaptive_mode=True
             ),
         )
+    else:
+        logger.info("☁️ Using Mistral Cloud TTS (Voxtral)")
+        # If the native MistralTTSService is available in this version of Pipecat, use it.
+        # Otherwise fall back to the OpenAI-compatible bridge.
+        if MistralTTSService:
+            tts = MistralTTSService(
+                api_key=os.environ.get("MISTRAL_API_KEY"),
+                voice="aria" # Default Mistral voice
+            )
+        else:
+            tts = OpenAITTSService(
+                api_key=os.environ.get("MISTRAL_API_KEY"),
+                model="mistral-tts",
+                base_url="https://api.mistral.ai/v1"
+            )
 
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
     audiobuffer = AudioBufferProcessor(num_channels=2) if ENABLE_RECORDING else None
@@ -229,7 +247,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.5-flash", # Updated based on user's current available model list
+        model="gemini-3.1-flash-preview", # Upgraded to the latest 3.1 Flash Preview
         run_in_parallel=False
     )
 
@@ -301,8 +319,19 @@ async def bot(runner_args: RunnerArguments):
         mcp_task.cancel()
 
 if __name__ == "__main__":
+    from pipecat.runner.run import RunnerArguments
+    
+    # Check keys before any heavy imports
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
         print("\n💥 FATAL ERROR: GEMINI_API_KEY is missing or empty!\n")
         sys.exit(1)
+
+    # Configure custom command line arguments for TTS switching
+    parser = RunnerArguments.add_argument_group("Vedic Astrology Bot Settings")
+    parser.add_argument("--magpie", action="store_true", help="Force local Magpie TTS instead of Mistral Cloud")
+    
+    # Parse command line and initialize bot
+    args = RunnerArguments.from_command_line()
+    
     from pipecat.runner.run import main
     main()
