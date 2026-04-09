@@ -96,7 +96,8 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
             frame: The start frame containing initialization parameters.
         """
         await super().start(frame)
-        await self._connect()
+        # Ensure we don't block StartFrame propagation while connecting
+        self._connect_task = asyncio.create_task(self._connect())
 
     async def stop(self, frame: EndFrame):
         """Stop the NVIDIA STT service.
@@ -204,7 +205,6 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
         # This also prevents "StartFrame not received yet" errors in downstream processors
         # if the transport starts pushing audio before the pipeline has fully initialized.
         if isinstance(frame, InputAudioRawFrame):
-            await super().process_frame(frame, direction)
             return
 
         # All other frames pass through normally
