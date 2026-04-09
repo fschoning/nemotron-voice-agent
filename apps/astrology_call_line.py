@@ -57,20 +57,66 @@ class MistralCloudTTSService(TTSService):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._model = model
-        self._voice = voice
-        self._url = "https://api.mistral.ai/v1/audio/speech"
+        self._requested_voice = voice
+        self._active_voice = None # Discovered in real-time
+        self._url_speech = "https://api.mistral.ai/v1/audio/speech"
+        self._url_voices = "https://api.mistral.ai/v1/audio/voices"
+
+    async def _discover_voice(self):
+        """Discovers the available voices and picks the requested one or the first available."""
+        if self._active_voice:
+            return
+            
+        pipelog.info("🔍 Discovering available Mistral voices...")
+        try:
+            async with httpx.AsyncClient() as client:
+                # We fetch the list of voices to see what IDs are actually valid for this account
+                response = await client.get(
+                    self._url_voices,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    voices = data.get("items", [])
+                    if voices:
+                        pipelog.info(f"✅ Found {len(voices)} voices. Listing for reference:")
+                        for v in voices:
+                            pipelog.info(f"  - {v.get('name')} (ID: {v.get('id')})")
+                        
+                        # Try to find our requested voice, otherwise pick the first one
+                        if any(v.get('id') == self._requested_voice for v in voices):
+                            self._active_voice = self._requested_voice
+                            pipelog.info(f"🎤 Using requested voice: {self._active_voice}")
+                        else:
+                            self._active_voice = voices[0]['id']
+                            pipelog.warning(f"⚠️ Requested '{self._requested_voice}' not in list. Falling back to first available: {self._active_voice}")
+                    else:
+                        pipelog.error("❌ Mistral voice list is empty.")
+                else:
+                    pipelog.error(f"❌ Failed to discover voices ({response.status_code}): {response.text}")
+        except Exception as e:
+            pipelog.error(f"❌ Error during voice discovery: {e}")
+        
+        # Final fallback to keep the service alive
+        if not self._active_voice:
+            self._active_voice = self._requested_voice
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
+        # Ensure we have a valid voice ID before calling speech API
+        await self._discover_voice()
+        
         pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    self._url,
+                    self._url_speech,
                     headers={"Authorization": f"Bearer {self._api_key}"},
                     json={
                         "model": self._model,
                         "input": text,
-                        "voice_id": self._voice,
+                        "voice_id": self._active_voice,
                         "response_format": "pcm"
                     },
                     timeout=30.0
