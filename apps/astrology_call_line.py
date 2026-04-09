@@ -33,6 +33,7 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 
 from pipecat.services.google import GoogleLLMService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
@@ -134,14 +135,14 @@ async def call_mcp_tool(tool_name: str, args: dict):
         logger.info(f"⚙️ Queuing LLM Tool Call: {tool_name} with args: {args}")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        
+
         tool_call_queue.put_nowait((tool_name, args, future))
-        
+
         result = await future
-        logger.info(f"✅ Tool {tool_name} returned successfully. Passing dict back to LLM.")
+        logger.info(f"✅ Tool {tool_name} returned successfully. Passing result back to LLM.")
         return result
     except asyncio.CancelledError:
-        logger.warning(f"⚠️ Tool call {tool_name} was interrupted by user.")
+        logger.warning(f"⚠️ Tool call {tool_name} was interrupted.")
         raise
     except Exception as e:
         logger.error(f"❌ MCP Tool Error ({tool_name}): {e}")
@@ -177,13 +178,24 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         logger.error("Aborting Pipecat startup: No MCP session available.")
         return
 
+    # Create a mapping for sanitized names (Gemini requires underscores only)
+    # sanitized_name -> original_mcp_name
+    mcp_name_map = {}
+
     pipecat_tools_list = []
     for tool in mcp_tools_cache:
+        original_name = tool.name
+        # Gemini does NOT allow hyphens. Replace with underscores.
+        sanitized_name = original_name.replace("-", "_")
+        mcp_name_map[sanitized_name] = original_name
+
+        props = tool.inputSchema.get("properties", {})
+
         pipecat_tools_list.append(
             FunctionSchema(
-                name=tool.name,
+                name=sanitized_name,
                 description=tool.description,
-                properties=tool.inputSchema.get("properties", {}),
+                properties=props if props else None,  # Avoid empty dict crash
                 required=tool.inputSchema.get("required", [])
             )
         )
@@ -232,19 +244,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         run_in_parallel=False
     )
 
-    for tool in mcp_tools_cache:
-        def create_handler(t_name):
-            async def handler(params):
-                args_dict = params.arguments if hasattr(params, "arguments") else (params if isinstance(params, dict) else {})
-                result = await call_mcp_tool(t_name, args_dict)
-                
-                # Hand it back precisely how Pipecat wants it
-                if hasattr(params, "result_callback"):
-                    await params.result_callback(result)
-                else:
-                    return result
+    # Register handlers using sanitized names
+    for sanitized_name, original_name in mcp_name_map.items():
+        def create_handler(o_name):
+            async def handler(params: FunctionCallParams):
+                args_dict = params.arguments
+                result = await call_mcp_tool(o_name, args_dict)
+                await params.result_callback(result)
             return handler
-        llm.register_function(tool.name, create_handler(tool.name))
+
+        llm.register_function(sanitized_name, create_handler(original_name))
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
