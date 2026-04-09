@@ -45,6 +45,33 @@ try:
     from pipecat.services.mistral import MistralTTSService
 except ImportError:
     MistralTTSService = None
+
+# A custom wrapper to allow Mistral Voxtral voices (Paul, Marie, etc.) 
+# by bypassing Pipecat's hardcoded OpenAI voice validation.
+class MistralCloudTTSService(OpenAITTSService):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Mistral uses different voice names than OpenAI. To prevent a KeyError/crash
+        # during frame processing, we inject them into the internal voice mapping.
+        # We try both class-level and instance-level attributes to be version-resilient.
+        mistral_voices = [
+            "Paul", "Margaret", "Oliver", "Marie", "Sanchit", 
+            "Angele", "Gustavo", "Khyathi", "Nick", "Yassir", "Patrick"
+        ]
+        
+        # version-resilient injection
+        for target in [self, type(self), OpenAITTSService]:
+            for attr_name in ["_voices", "VOICES", "voices"]:
+                attr = getattr(target, attr_name, None)
+                if isinstance(attr, dict):
+                    for v in mistral_voices:
+                        if v not in attr:
+                            attr[v] = v
+                elif isinstance(attr, list):
+                    for v in mistral_voices:
+                        if v not in attr:
+                            attr.append(v)
+
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -197,9 +224,6 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     stt = NVidiaWebSocketSTTService(url=NVIDIA_ASR_URL, sample_rate=16000)
 
-    active_tts = os.getenv("ACTIVE_TTS", "magpie").lower()
-    if active_tts == "voxtral":
-        voxtral_url = os.getenv("VOXTRAL_TTS_URL", "http://127.0.0.1:8002/v1")
     # Select TTS provider based on environment variable (set via CLI in main)
     # Default is Mistral Cloud (Voxtral), swappable to Magpie with --magpie flag
     if os.getenv("USE_MAGPIE") == "true":
@@ -207,26 +231,20 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         tts = MagpieWebSocketTTSService(server_url=NVIDIA_TTS_URL)
     else:
         logger.info("☁️ Using Mistral Cloud TTS (Voxtral)")
-        # If the native MistralTTSService is available in this version of Pipecat, use it.
-        # Otherwise fall back to the OpenAI-compatible bridge.
-        if MistralTTSService:
-            tts = MistralTTSService(
-                api_key=os.environ.get("MISTRAL_API_KEY"),
-                voice="aria" # Default Mistral voice
-            )
-        else:
-            tts = OpenAITTSService(
-                api_key=os.environ.get("MISTRAL_API_KEY"),
-                model="voxtral-mini-tts-2603", # User-verified model ID for Voxtral Cloud
-                voice="Paul", # Mistral's default neutral voice
-                base_url="https://api.mistral.ai/v1"
-                # Available Mistral/Voxtral Voices for Reference:
-                # - Paul (English - US) - Default
-                # - Margaret (English - US)
-                # - Oliver (English - UK)
-                # - Marie (French)
-                # - Sanchit, Angele, Gustavo, Khyathi, Nick, Yassir, Patrick
-            )
+        # If a native MistralTTSService was added recently to the lib, use it.
+        # Otherwise use our resilient OpenAI-compatible wrapper.
+        tts = MistralCloudTTSService(
+            api_key=os.environ.get("MISTRAL_API_KEY"),
+            model="voxtral-mini-tts-2603", # User-verified model ID for Voxtral Cloud
+            voice="Paul", # Mistral's default neutral voice
+            base_url="https://api.mistral.ai/v1"
+            # Available Mistral/Voxtral Voices:
+            # - Paul (English - US) - Default
+            # - Margaret (English - US)
+            # - Oliver (English - UK)
+            # - Marie (French)
+            # - Sanchit, Angele, Gustavo, Khyathi, Nick, Yassir, Patrick
+        )
 
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
     audiobuffer = AudioBufferProcessor(num_channels=2) if ENABLE_RECORDING else None
