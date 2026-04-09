@@ -396,7 +396,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.0-flash", 
+        model="gemini-2.5-flash", 
         run_in_parallel=False
     )
 
