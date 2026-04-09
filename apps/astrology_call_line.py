@@ -46,7 +46,14 @@ from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.tts_service import TTSService
 from pipecat.services.llm_service import FunctionCallParams
-from pipecat.frames.frames import AudioRawFrame, ErrorFrame, Frame
+from pipecat.frames.frames import (
+    AudioRawFrame, 
+    ErrorFrame, 
+    Frame, 
+    TTSAudioRawFrame, 
+    TTSStartedFrame, 
+    TTSStoppedFrame
+)
 
 # Use a dedicated name for the standard logger to avoid shadowing loguru.logger
 pipelog = logging.getLogger("pipecat")
@@ -62,10 +69,11 @@ class MistralCloudTTSService(TTSService):
         self._url_speech = "https://api.mistral.ai/v1/audio/speech"
         self._url_voices = "https://api.mistral.ai/v1/audio/voices"
         self._client = None
+        self._semaphore = asyncio.Semaphore(1) # Prevent concurrent API calls (fixes 503 overflow)
 
     def _get_client(self):
         if not self._client:
-            self._client = httpx.AsyncClient()
+            self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
     async def _discover_voice(self):
@@ -88,16 +96,33 @@ class MistralCloudTTSService(TTSService):
                 voices = data.get("items", [])
                 if voices:
                     pipelog.info(f"✅ Found {len(voices)} voices.")
-                    # Try to find our requested voice by ID or name (case-insensitive)
+                    # 1. Try exact ID match
                     for v in voices:
-                        if v.get('id') == self._requested_voice or self._requested_voice.lower() in v.get('name', '').lower():
+                        if v.get('id') == self._requested_voice:
                             self._active_voice = v.get('id')
-                            pipelog.info(f"🎤 Using voice: {v.get('name')} ({self._active_voice})")
                             break
                     
+                    # 2. Try exact Name match
                     if not self._active_voice:
+                        for v in voices:
+                            if v.get('name').lower() == self._requested_voice.lower():
+                                self._active_voice = v.get('id')
+                                break
+                    
+                    # 3. Try partial Name match
+                    if not self._active_voice:
+                        for v in voices:
+                            if self._requested_voice.lower() in v.get('name', '').lower():
+                                self._active_voice = v.get('id')
+                                break
+                    
+                    if self._active_voice:
+                        # Find the name for logging
+                        v_name = next((v.get('name') for v in voices if v.get('id') == self._active_voice), "Unknown")
+                        pipelog.info(f"🎤 Using voice: {v_name} ({self._active_voice})")
+                    else:
                         self._active_voice = voices[0]['id']
-                        pipelog.warning(f"⚠️ Requested voice not in list. Falling back to: {self._active_voice}")
+                        pipelog.warning(f"⚠️ Requested voice not found. Falling back to: {self._active_voice}")
                 else:
                     pipelog.error("❌ Mistral voice list is empty.")
             else:
@@ -113,50 +138,43 @@ class MistralCloudTTSService(TTSService):
         # Ensure we have a valid voice ID before calling speech API
         await self._discover_voice()
         
-        pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
-        try:
-            client = self._get_client()
-            response = await client.post(
-                self._url_speech,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": self._model,
-                    "input": text,
-                    "voice_id": self._active_voice,
-                    "response_format": "pcm"
-                },
-                timeout=30.0
-            )
-            
-            if response.status_code != 200:
-                pipelog.error(f"Mistral API Error ({response.status_code}): {response.text}")
-                yield ErrorFrame(f"Mistral Error: {response.text}")
-                return
+        yield TTSStartedFrame()
+        
+        async with self._semaphore: # Concurrency control to prevent 503 overflow
+            pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
+            try:
+                client = self._get_client()
+                response = await client.post(
+                    self._url_speech,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "model": self._model,
+                        "input": text,
+                        "voice_id": self._active_voice,
+                        "response_format": "pcm"
+                    },
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    pipelog.error(f"Mistral API Error ({response.status_code}): {response.text}")
+                    yield ErrorFrame(f"Mistral Error: {response.text}")
+                    yield TTSStoppedFrame()
+                    return
 
-            data = response.json()
-            # The Voxtral API returns audio_data as a base64 encoded string
-            if "audio_data" in data and data["audio_data"]:
-                audio_bytes = base64.b64decode(data["audio_data"])
-                # Yield as raw PCM. Voxtral default is 24kHz.
-                # In 0.0.98 we must ensure the frame has an ID and standard attributes
-                frame = AudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
-                
-                # Robust attribute injection for older Pipecat transports/observers
-                try:
-                    setattr(frame, "id", f"mistral_pcm_{os.urandom(4).hex()}")
-                    setattr(frame, "transport_destination", None)
-                except Exception:
-                    # If it's a frozen dataclass or similar, try to use the constructor logic
-                    # though most Frames are mutable.
-                    pass
+                data = response.json()
+                if "audio_data" in data and data["audio_data"]:
+                    audio_bytes = base64.b64decode(data["audio_data"])
+                    # Use TTSAudioRawFrame for proper Pipecat TTS lifecycle/metadata handling
+                    yield TTSAudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+                else:
+                    pipelog.error("Mistral Voxtral API returned no audio data.")
                     
-                yield frame
-            else:
-                pipelog.error("Mistral Voxtral API returned no audio data.")
+            except Exception as e:
+                pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
+                yield ErrorFrame(f"Mistral Error: {e}")
                 
-        except Exception as e:
-            pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
-            yield ErrorFrame(f"Mistral Error: {e}")
+        yield TTSStoppedFrame()
 
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
