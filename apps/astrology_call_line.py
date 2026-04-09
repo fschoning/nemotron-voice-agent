@@ -312,7 +312,11 @@ async def call_mcp_tool(tool_name: str, args: dict):
         future = loop.create_future()
         tool_call_queue.put_nowait((tool_name, args, future))
         result = await future
-        logger.info(f"✅ Tool {tool_name} returned successfully. Result: {result}")
+        try:
+            pretty_result = json.dumps(result, indent=2)
+            logger.info(f"✅ Tool {tool_name} returned:\n{pretty_result}")
+        except:
+            logger.info(f"✅ Tool {tool_name} returned: {result}")
         return result
     except asyncio.CancelledError:
         logger.warning(f"⚠️ Tool call {tool_name} was interrupted.")
