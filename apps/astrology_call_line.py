@@ -3,7 +3,6 @@ import asyncio
 import json
 import os
 import sys
-import os
 from pathlib import Path
 
 # Add project root to sys.path to allow importing from pipecat_bots
@@ -12,7 +11,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 import wave
 from datetime import datetime
 from io import BytesIO
-from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -59,22 +57,6 @@ MCP_SERVER_URL = "http://192.168.1.121:16080/mcp/sse"
 ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 VAD_STOP_SECS = 0.2
-
-# --- Pipeline Gater ---
-class StartFrameGater(FrameProcessor):
-    def __init__(self):
-        super().__init__()
-        self._started = False
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        if isinstance(frame, StartFrame):
-            self._started = True
-        
-        # Swallow problematic frames if we haven't officially started
-        if not self._started and isinstance(frame, InputAudioRawFrame):
-            return
-            
-        await self.push_frame(frame, direction)
 
 # --- Global State ---
 mcp_session = None
@@ -130,7 +112,6 @@ async def manage_mcp_connection():
                                 text_val = result.content[0].text
                                 try:
                                     parsed_json = json.loads(text_val)
-                                    # GUARANTEE A DICTIONARY TO PREVENT GOOGLE SDK CRASH
                                     if isinstance(parsed_json, list):
                                         future.set_result({"data": parsed_json})
                                     else:
@@ -158,9 +139,7 @@ async def call_mcp_tool(tool_name: str, args: dict):
         logger.info(f"⚙️ Queuing LLM Tool Call: {tool_name} with args: {args}")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-
         tool_call_queue.put_nowait((tool_name, args, future))
-
         result = await future
         logger.info(f"✅ Tool {tool_name} returned successfully. Passing result back to LLM.")
         return result
@@ -192,33 +171,19 @@ transport_params = {
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     logger.info("Starting Vedic Astrologer interleaved streaming bot")
 
-    global tool_call_queue
-    tool_call_queue = asyncio.Queue()
-
-    mcp_task = asyncio.create_task(manage_mcp_connection())
-    await mcp_ready_event.wait()
-    if not mcp_session:
-        logger.error("Aborting Pipecat startup: No MCP session available.")
-        return
-
     # Create a mapping for sanitized names (Gemini requires underscores only)
-    # sanitized_name -> original_mcp_name
     mcp_name_map = {}
-
     pipecat_tools_list = []
     for tool in mcp_tools_cache:
         original_name = tool.name
-        # Gemini does NOT allow hyphens. Replace with underscores.
         sanitized_name = original_name.replace("-", "_")
         mcp_name_map[sanitized_name] = original_name
-
         props = tool.inputSchema.get("properties", {})
-
         pipecat_tools_list.append(
             FunctionSchema(
                 name=sanitized_name,
                 description=tool.description,
-                properties=props if props else None,  # Avoid empty dict crash
+                properties=props if props else None,
                 required=tool.inputSchema.get("required", [])
             )
         )
@@ -260,28 +225,24 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     context = LLMContext(messages, tools=pipecat_tools)
     context_aggregator = LLMContextAggregatorPair(context)
 
-    # --- THE CRITICAL FIX: Disable parallel execution to prevent swallowed errors ---
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # Updated to a valid model name
         run_in_parallel=False
     )
 
-    # Register handlers using sanitized names
     for sanitized_name, original_name in mcp_name_map.items():
         def create_handler(o_name):
             async def handler(params: FunctionCallParams):
-                args_dict = params.arguments
-                result = await call_mcp_tool(o_name, args_dict)
+                result = await call_mcp_tool(o_name, params.arguments)
                 await params.result_callback(result)
             return handler
-
         llm.register_function(sanitized_name, create_handler(original_name))
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     pipeline_processors = [
-        transport.input(), StartFrameGater(), rtvi, stt, context_aggregator.user(), llm,
+        transport.input(), rtvi, stt, context_aggregator.user(), llm,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
@@ -306,15 +267,24 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
-
-    try:
-        await runner.run(task)
-    finally:
-        mcp_task.cancel()
+    await runner.run(task)
 
 async def bot(runner_args: RunnerArguments):
+    # Idiomatic Pipecat Init: Dependencies first, Transport second, Task third.
+    global tool_call_queue
+    tool_call_queue = asyncio.Queue()
+    mcp_task = asyncio.create_task(manage_mcp_connection())
+    await mcp_ready_event.wait()
+
+    if not mcp_session:
+        logger.error("Aborting Pipecat startup: No MCP session available.")
+        return
+
     transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args)
+    try:
+        await run_bot(transport, runner_args)
+    finally:
+        mcp_task.cancel()
 
 if __name__ == "__main__":
     if not os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") == "none":
