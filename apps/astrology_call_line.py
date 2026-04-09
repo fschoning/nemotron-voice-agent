@@ -51,6 +51,11 @@ from apps.prompts.vedic_astrologer import VEDIC_ASTROLOGER_AUDIO_PROMPT
 
 load_dotenv(override=True)
 
+# --- Logging Configuration ---
+# Suppress noisy WebRTC and transport debug logs
+logger.remove()
+logger.add(sys.stderr, level="INFO")
+
 NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://127.0.0.1:8080")
 NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://127.0.0.1:8001")
 MCP_SERVER_URL = "http://192.168.1.121:16080/mcp/sse"
@@ -58,16 +63,6 @@ ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 VAD_STOP_SECS = 0.2
 
-# --- Pipeline Swallower ---
-class AudioSwallower(FrameProcessor):
-    """Silently swallows raw audio frames before they reach the LLM aggregator.
-    This prevents 'StartFrame not received' errors caused by transports 
-    warming up and streaming audio before the pipeline officially starts.
-    """
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        if isinstance(frame, InputAudioRawFrame):
-            return
-        await super().process_frame(frame, direction)
 
 # --- Global State ---
 mcp_session = None
@@ -253,7 +248,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     pipeline_processors = [
-        transport.input(), rtvi, stt, AudioSwallower(), context_aggregator.user(), llm,
+        transport.input(), rtvi, stt, context_aggregator.user(), llm,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
