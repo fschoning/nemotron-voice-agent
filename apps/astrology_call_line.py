@@ -14,6 +14,12 @@ from io import BytesIO
 
 from dotenv import load_dotenv
 from loguru import logger
+import logging
+
+# Early suppression of Pipecat dependency loggers (aiortc, etc)
+logging.getLogger("aiortc").setLevel(logging.WARNING)
+logging.getLogger("aiohttp").setLevel(logging.WARNING)
+logging.getLogger("pipecat").setLevel(logging.INFO)
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -54,7 +60,7 @@ load_dotenv(override=True)
 # --- Logging Configuration ---
 # Suppress noisy WebRTC and transport debug logs
 logger.remove()
-logger.add(sys.stderr, level="INFO")
+logger.add(sys.stderr, level="INFO", filter=lambda record: "pipecat.transports.smallwebrtc" not in record["name"] and "pipecat.runner" not in record["name"])
 
 NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://127.0.0.1:8080")
 NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://127.0.0.1:8001")
@@ -233,7 +239,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.0-flash", # Updated to a valid model name
+        model="gemini-1.5-flash", # Reverted to 1.5-flash for guaranteed stability
         run_in_parallel=False
     )
 
