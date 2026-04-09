@@ -143,7 +143,7 @@ class MistralCloudTTSService(TTSService):
         async with self._semaphore: # Concurrency control to prevent 503 overflow
             pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
             
-            max_retries = 3
+            max_retries = 5
             client = self._get_client()
             
             for attempt in range(max_retries):
@@ -155,7 +155,7 @@ class MistralCloudTTSService(TTSService):
                             "model": self._model,
                             "input": text,
                             "voice_id": self._active_voice,
-                            "response_format": "pcm"
+                            "response_format": "wav" # Request WAV to accurately strip headers and get sample_rate
                         },
                         timeout=30.0
                     )
@@ -163,7 +163,7 @@ class MistralCloudTTSService(TTSService):
                     if response.status_code in [503, 429, 502, 504]:
                         pipelog.warning(f"Mistral API overloaded ({response.status_code}). Retry {attempt+1}/{max_retries}...")
                         if attempt < max_retries - 1:
-                            await asyncio.sleep(1.5 * (2 ** attempt)) # Exponential backoff
+                            await asyncio.sleep(2.0 * (1.5 ** attempt)) # Exponential backoff
                             continue
                         else:
                             pipelog.error(f"Mistral API Error ({response.status_code}): Max retries exceeded.")
@@ -178,8 +178,26 @@ class MistralCloudTTSService(TTSService):
                     data = response.json()
                     if "audio_data" in data and data["audio_data"]:
                         audio_bytes = base64.b64decode(data["audio_data"])
-                        # Use TTSAudioRawFrame for proper Pipecat TTS lifecycle/metadata handling
-                        yield TTSAudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+                        
+                        # Fix "machine industrial noise": Extract raw 16-bit PCM from WAV container.
+                        # This strips out the WAV header bytes which sound glitchy/metallic as raw PCM
+                        # and guarantees we read the EXACT sample rate the endpoint actually returned.
+                        import wave
+                        import io
+                        try:
+                            with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+                                sample_rate = wf.getframerate()
+                                num_channels = wf.getnchannels()
+                                raw_pcm = wf.readframes(wf.getnframes())
+                                
+                                # In 0.0.98 we must ensure we use the explicit native rate we discovered, 
+                                # so Pipecat handles any resampling needed dynamically for the WebRTC transport
+                                yield TTSAudioRawFrame(audio=raw_pcm, sample_rate=sample_rate, num_channels=num_channels)
+                        except Exception as wav_error:
+                            pipelog.error(f"Failed to parse audio as WAV: {wav_error}")
+                            # Fallback if Mistral lies and gives us pure PCM anyway
+                            yield TTSAudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+
                         break # Success, exit retry loop
                     else:
                         pipelog.error("Mistral Voxtral API returned no audio data.")
@@ -188,7 +206,7 @@ class MistralCloudTTSService(TTSService):
                 except Exception as e:
                     if attempt < max_retries - 1:
                         pipelog.warning(f"Mistral API connection error: {e}. Retrying {attempt+1}/{max_retries}...")
-                        await asyncio.sleep(1.5 * (2 ** attempt))
+                        await asyncio.sleep(2.0 * (1.5 ** attempt))
                     else:
                         pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
                         yield ErrorFrame(f"Mistral Error: {e}")
