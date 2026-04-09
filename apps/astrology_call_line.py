@@ -142,37 +142,57 @@ class MistralCloudTTSService(TTSService):
         
         async with self._semaphore: # Concurrency control to prevent 503 overflow
             pipelog.debug(f"Calling Mistral Voxtral API for: {text[:40]}...")
-            try:
-                client = self._get_client()
-                response = await client.post(
-                    self._url_speech,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={
-                        "model": self._model,
-                        "input": text,
-                        "voice_id": self._active_voice,
-                        "response_format": "pcm"
-                    },
-                    timeout=30.0
-                )
-                
-                if response.status_code != 200:
-                    pipelog.error(f"Mistral API Error ({response.status_code}): {response.text}")
-                    yield ErrorFrame(f"Mistral Error: {response.text}")
-                    yield TTSStoppedFrame()
-                    return
-
-                data = response.json()
-                if "audio_data" in data and data["audio_data"]:
-                    audio_bytes = base64.b64decode(data["audio_data"])
-                    # Use TTSAudioRawFrame for proper Pipecat TTS lifecycle/metadata handling
-                    yield TTSAudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
-                else:
-                    pipelog.error("Mistral Voxtral API returned no audio data.")
+            
+            max_retries = 3
+            client = self._get_client()
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await client.post(
+                        self._url_speech,
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        json={
+                            "model": self._model,
+                            "input": text,
+                            "voice_id": self._active_voice,
+                            "response_format": "pcm"
+                        },
+                        timeout=30.0
+                    )
                     
-            except Exception as e:
-                pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
-                yield ErrorFrame(f"Mistral Error: {e}")
+                    if response.status_code in [503, 429, 502, 504]:
+                        pipelog.warning(f"Mistral API overloaded ({response.status_code}). Retry {attempt+1}/{max_retries}...")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1.5 * (2 ** attempt)) # Exponential backoff
+                            continue
+                        else:
+                            pipelog.error(f"Mistral API Error ({response.status_code}): Max retries exceeded.")
+                            yield ErrorFrame(f"Mistral Error: {response.text}")
+                            break
+                    
+                    if response.status_code != 200:
+                        pipelog.error(f"Mistral API Error ({response.status_code}): {response.text}")
+                        yield ErrorFrame(f"Mistral Error: {response.text}")
+                        break
+
+                    data = response.json()
+                    if "audio_data" in data and data["audio_data"]:
+                        audio_bytes = base64.b64decode(data["audio_data"])
+                        # Use TTSAudioRawFrame for proper Pipecat TTS lifecycle/metadata handling
+                        yield TTSAudioRawFrame(audio=audio_bytes, sample_rate=24000, num_channels=1)
+                        break # Success, exit retry loop
+                    else:
+                        pipelog.error("Mistral Voxtral API returned no audio data.")
+                        break # Permanent error, exit retry loop
+                        
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        pipelog.warning(f"Mistral API connection error: {e}. Retrying {attempt+1}/{max_retries}...")
+                        await asyncio.sleep(1.5 * (2 ** attempt))
+                    else:
+                        pipelog.error(f"Mistral Voxtral HTTP Error: {e}")
+                        yield ErrorFrame(f"Mistral Error: {e}")
+                        break
                 
         yield TTSStoppedFrame()
 
