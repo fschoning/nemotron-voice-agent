@@ -49,6 +49,7 @@ class WebhookServer:
             join_events = [
                 "meeting.participant_joined", 
                 "meeting.participant_waiting_for_host",
+                "meeting.participant_jbh_waiting",
                 "meeting.participant_joined_waiting_room"
             ]
             
