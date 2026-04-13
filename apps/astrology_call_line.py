@@ -37,6 +37,7 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.processors.user_idle_processor import UserIdleProcessor
 
 import base64
 import httpx
@@ -403,6 +404,13 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
     context = LLMContext(messages, tools=pipecat_tools)
     context_aggregator = LLMContextAggregatorPair(context)
 
+    async def on_user_idle(processor: UserIdleProcessor):
+        logger.info("User is idle. Prompting bot to speak.")
+        messages.append({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
+        await task.queue_frames([LLMRunFrame()])
+
+    user_idle = UserIdleProcessor(callback=on_user_idle, timeout=12.0)
+
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
         model="gemini-2.5-flash", 
@@ -420,7 +428,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     pipeline_processors = [
-        transport.input(), rtvi, stt, context_aggregator.user(), llm,
+        transport.input(), rtvi, stt, context_aggregator.user(), user_idle, llm,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)

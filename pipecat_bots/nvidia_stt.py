@@ -331,7 +331,11 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
     async def _connect_websocket(self):
         """Establish the websocket connection."""
         try:
-            self._websocket = await websockets.connect(self._url)
+            self._websocket = await websockets.connect(
+                self._url,
+                ping_interval=None,
+                ping_timeout=None
+            )
             self._ready = False
 
             # Wait for ready message
