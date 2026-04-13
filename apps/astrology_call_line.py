@@ -439,6 +439,12 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
         await rtvi.set_bot_ready()
         await task.queue_frames([LLMRunFrame()])
 
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        logger.info(f"First participant joined: {participant['id']}")
+        if audiobuffer: await audiobuffer.start_recording()
+        await task.queue_frames([LLMRunFrame()])
+
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
