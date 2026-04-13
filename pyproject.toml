@@ -29,6 +29,9 @@ dependencies = [
     "pipecat-ai[cartesia,daily,google,local-smart-turn-v3,openai,runner,silero,webrtc]==0.0.98",
     # Local Riva TTS
     "nvidia-riva-client>=2.16.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]

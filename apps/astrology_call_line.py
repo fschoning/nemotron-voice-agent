@@ -218,6 +218,10 @@ from pipecat_bots.nvidia_stt import NVidiaWebSocketSTTService
 from pipecat_bots.magpie_websocket_tts import MagpieWebSocketTTSService
 from pipecat_bots.v2v_metrics import V2VMetricsProcessor
 from apps.prompts.vedic_astrologer import VEDIC_ASTROLOGER_AUDIO_PROMPT
+from transports.attendee_transport import AttendeeTransportParams, AttendeeTransport
+from transports.attendee_client import AttendeeClient
+from transports.attendee_webhooks import WebhookServer
+import urllib.parse
 
 load_dotenv(override=True)
 
@@ -343,6 +347,14 @@ transport_params = {
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
+    "attendee": lambda: AttendeeTransportParams(
+        audio_in_enabled=True, audio_out_enabled=True,
+        ws_port=int(os.environ.get("ATTENDEE_WS_PORT", "8765")),
+        ws_host="0.0.0.0",
+        sample_rate=16000,
+        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
+    ),
 }
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
@@ -448,7 +460,82 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)
 
-async def bot(runner_args: RunnerArguments):
+async def zoom_mode(runner_args: RunnerArguments, webhook_server: WebhookServer, transport: AttendeeTransport):
+    zoom_url = os.environ.get("ZOOM_SESSION_URL")
+    bot_name = os.environ.get("ZOOM_BOT_NAME", "Vedic Pathway Astrologer")
+    
+    # Extract meeting ID from URL
+    parsed_url = urllib.parse.urlparse(zoom_url)
+    meeting_id = parsed_url.path.split("/")[-1].replace("-", "")
+    
+    logger.info(f"Setting up zoom standby mode for meeting {meeting_id}")
+    
+    # Update webhook server to watch this specific meeting
+    webhook_server.meeting_id_to_watch = meeting_id
+    
+    # Setup Attendee client
+    attendee_api_key = os.environ.get("ATTENDEE_API_KEY", "")
+    public_url = os.environ.get("PUBLIC_URL", "https://attendee.vedicpathway.com")
+    attendee_client = AttendeeClient(attendee_api_key)
+    
+    transport_param_obj = transport_params["attendee"]()
+    transport = AttendeeTransport(transport_param_obj)
+    
+    bot_ready_event = asyncio.Event()
+    meeting_ended_event = asyncio.Event()
+    
+    async def on_join():
+        logger.info("Triggered on_join, setting up Attendee bot...")
+        try:
+            bot_data = await attendee_client.create_bot(
+                meeting_url=zoom_url,
+                bot_name=bot_name,
+                ws_url=f"wss://{public_url.replace('https://', '')}/attendee-audio",
+                webhook_url=f"{public_url}/webhooks/attendee"
+            )
+            bot_id = bot_data.get("id")
+            
+            # Save bot ID for stop script
+            os.makedirs("logs", exist_ok=True)
+            import json
+            with open("logs/attendee_bot.json", "w") as f:
+                json.dump({"bot_id": bot_id}, f)
+                
+            logger.info(f"Attendee bot created: {bot_id}")
+            bot_ready_event.set()
+        except Exception as e:
+            logger.error(f"Failed to create bot: {e}")
+            meeting_ended_event.set()
+            
+    async def on_end():
+        logger.info("Triggered on_end, stopping bot...")
+        meeting_ended_event.set()
+        
+    webhook_server.on_participant_joined = on_join
+    webhook_server.on_bot_ended = on_end
+    
+    await transport.start()
+    
+    logger.info("🟡 STANDBY: Waiting for guest to join Zoom meeting...")
+    
+    # Wait for join
+    await bot_ready_event.wait()
+    
+    logger.info("🟢 Guest joined! Starting Pipecat pipeline...")
+    
+    run_task = asyncio.create_task(run_bot(transport, runner_args))
+    
+    # Wait for end
+    await meeting_ended_event.wait()
+    logger.info("🔴 Zoom meeting ended. Cleaning up and exiting.")
+    
+    # Teardown
+    run_task.cancel()
+    await transport.stop()
+    
+    sys.exit(0)
+
+async def bot(runner_args: RunnerArguments, webhook_server: WebhookServer = None):
     # FOR GOD'S SAKE, SILENCE THE LOGS.
     # We do this here, INSIDE the bot function, because pipecat.runner.run.main() 
     # clobbers any logging setup done at the module level.
@@ -473,7 +560,14 @@ async def bot(runner_args: RunnerArguments):
 
     transport = await create_transport(runner_args, transport_params)
     try:
-        await run_bot(transport, runner_args)
+        if os.environ.get("ZOOM_SESSION_URL"):
+            # Ensure we use AttendeeTransport for zoom mode
+            if not isinstance(transport, AttendeeTransport):
+                transport_param_obj = transport_params["attendee"]()
+                transport = AttendeeTransport(transport_param_obj)
+            await zoom_mode(runner_args, webhook_server, transport)
+        else:
+            await run_bot(transport, runner_args)
     finally:
         mcp_task.cancel()
 
@@ -490,7 +584,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--magpie", action="store_true")
     parser.add_argument("--voice-selector", action="store_true")
+    parser.add_argument("--zoom", type=str, help="Zoom meeting URL to join")
+    parser.add_argument("--bot-name", type=str, default="Vedic Pathway Astrologer", help="Bot name in Zoom")
     args, unknown = parser.parse_known_args()
+    
+    if args.zoom:
+        os.environ["ZOOM_SESSION_URL"] = args.zoom
+        os.environ["ZOOM_BOT_NAME"] = args.bot_name
     
     # 2. Set an environment variable as a side-channel to the bot() function
     if args.magpie:
@@ -521,7 +621,7 @@ if __name__ == "__main__":
         sys.exit(0)
     else:
         # Standard run - check if MISTRAL_VOICE_ID was already provided (e.g. by start.sh)
-        if not os.getenv("MISTRAL_VOICE_ID") and sys.stdin.isatty():
+        if not os.getenv("MISTRAL_VOICE_ID") and sys.stdin.isatty() and not getattr(args, "zoom", None):
              # Fallback for direct python runs without start.sh
              api_key = os.getenv("MISTRAL_API_KEY")
              if api_key:
@@ -541,7 +641,37 @@ if __name__ == "__main__":
         
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
+    
+    # Start Webhook Server background for validation (satisfies Zoom)
+    # We do this here so it starts immediately, even before Pipecat runner.
+    webhook_port = int(os.environ.get("ATTENDEE_WEBHOOK_PORT", "8766"))
+    zoom_secret = os.environ.get("ZOOM_WEBHOOK_SECRET", "")
+    webhook_server = WebhookServer(webhook_port, zoom_secret)
 
-    # 4. Start the standard runner
-    from pipecat.runner.run import main
-    main()
+    if args.zoom:
+        # 4a. Zoom mode: Bypass standard runner and start bot() directly
+        logger.info(f"🚀 Starting Zoom standby mode for meeting {args.zoom}...")
+        runner_args = RunnerArguments(
+            pipeline_idle_timeout_secs=600,
+            handle_sigint=True
+        )
+        
+        async def zoom_init():
+            await webhook_server.start()
+            await bot(runner_args, webhook_server)
+            
+        asyncio.run(zoom_init())
+    else:
+        # 4b. Standard mode: Start webhook server in background thread, then start runner
+        import threading
+        def run_webhooks():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(webhook_server.start())
+            loop.run_forever()
+        
+        threading.Thread(target=run_webhooks, daemon=True).start()
+        
+        logger.info("🚀 Starting standard WebRTC/Daily mode...")
+        from pipecat.runner.run import main
+        main()

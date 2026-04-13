@@ -28,6 +28,21 @@ fi
 
 echo "🛑 Stopping Astrology bot (PID: $PID)..."
 
+if [ -f "$PROJECT_ROOT/logs/attendee_bot.json" ]; then
+    BOT_ID=$(cat "$PROJECT_ROOT/logs/attendee_bot.json" | grep -o '"bot_id": *"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$BOT_ID" ]; then
+        echo "🛑 Informing Attendee to remove bot: $BOT_ID"
+        # Source .env to get the API key
+        if [ -f "$PROJECT_ROOT/.env" ]; then
+            export $(grep -v '^#' "$PROJECT_ROOT/.env" | xargs)
+        fi
+        curl -X DELETE "https://app.attendee.dev/api/v1/bots/$BOT_ID" \
+             -H "Authorization: Token $ATTENDEE_API_KEY" \
+             --silent --output /dev/null || true
+        rm "$PROJECT_ROOT/logs/attendee_bot.json"
+    fi
+fi
+
 # Try graceful shutdown (SIGTERM)
 kill -TERM "$PID" 2>/dev/null || true
 

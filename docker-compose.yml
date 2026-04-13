@@ -122,6 +122,11 @@ services:
       - NVIDIA_ASR_URL=ws://127.0.0.1:8080
       - NVIDIA_TTS_URL=http://127.0.0.1:8001
       - ACTIVE_TTS=magpie
+      - ATTENDEE_API_KEY=${ATTENDEE_API_KEY}
+      - ATTENDEE_WS_PORT=8765
+      - ATTENDEE_WEBHOOK_PORT=8766
+      - PUBLIC_URL=${PUBLIC_URL}
+      - ZOOM_WEBHOOK_SECRET=${ZOOM_WEBHOOK_SECRET}
     volumes:
       # Maps your local apps folder into the container for hot-reloading
       - ./apps:/app/apps
