@@ -558,16 +558,19 @@ async def bot(runner_args: RunnerArguments, webhook_server: WebhookServer = None
         logger.error("Aborting Pipecat startup: No MCP session available.")
         return
 
+    if os.environ.get("ZOOM_SESSION_URL"):
+        # Bypass create_transport for Attendee integration
+        transport_param_obj = transport_params["attendee"]()
+        transport = AttendeeTransport(transport_param_obj)
+        try:
+            await zoom_mode(runner_args, webhook_server, transport)
+        finally:
+            mcp_task.cancel()
+        return
+
     transport = await create_transport(runner_args, transport_params)
     try:
-        if os.environ.get("ZOOM_SESSION_URL"):
-            # Ensure we use AttendeeTransport for zoom mode
-            if not isinstance(transport, AttendeeTransport):
-                transport_param_obj = transport_params["attendee"]()
-                transport = AttendeeTransport(transport_param_obj)
-            await zoom_mode(runner_args, webhook_server, transport)
-        else:
-            await run_bot(transport, runner_args)
+        await run_bot(transport, runner_args)
     finally:
         mcp_task.cancel()
 
