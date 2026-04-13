@@ -409,7 +409,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
         messages.append({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
         await task.queue_frames([LLMRunFrame()])
 
-    user_idle = UserIdleProcessor(callback=on_user_idle, timeout=12.0)
+    user_idle = UserIdleProcessor(callback=on_user_idle, timeout=6.0)
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
