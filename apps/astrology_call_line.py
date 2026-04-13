@@ -263,7 +263,8 @@ async def save_audio_file(audio: bytes, sample_rate: int, num_channels: int, fil
 async def manage_mcp_connection():
     global mcp_session
     try:
-        async with sse_client(url=MCP_SERVER_URL) as streams:
+        # Set timeout=None to prevent SSE session from timing out during standby
+        async with sse_client(url=MCP_SERVER_URL, timeout=None) as streams:
             async with ClientSession(streams[0], streams[1]) as session:
                 await session.initialize()
                 mcp_session = session

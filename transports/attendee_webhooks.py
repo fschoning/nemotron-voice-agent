@@ -23,8 +23,15 @@ class WebhookServer:
         self.setup_routes()
 
     def setup_routes(self):
+        @self.app.get("/ping")
+        async def ping():
+            return {"status": "ok", "message": "Webhook server is live"}
+
         @self.app.post("/webhooks/zoom")
         async def zoom_webhook(request: Request, background_tasks: BackgroundTasks):
+            body = await request.body()
+            logger.debug(f"Received request on /webhooks/zoom: {body.decode('utf-8')}")
+            
             payload = await request.json()
             event = payload.get("event")
             
@@ -61,6 +68,9 @@ class WebhookServer:
 
         @self.app.post("/webhooks/attendee")
         async def attendee_webhook(request: Request, background_tasks: BackgroundTasks):
+            body = await request.body()
+            logger.debug(f"Received request on /webhooks/attendee: {body.decode('utf-8')}")
+            
             payload = await request.json()
             event = payload.get("event")
             
