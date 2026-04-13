@@ -66,7 +66,7 @@ class MistralCloudTTSService(TTSService):
         self._requested_voice = voice.strip() if voice else None
         self._active_voice = None # Discovered in real-time
         self._url_speech = "https://api.mistral.ai/v1/audio/speech"
-        self._url_voices = "https://api.mistral.ai/v1/audio/voices"
+        self._url_voices = "https://api.mistral.ai/v1/audio/voices?limit=100"
         self._client = None
         self._semaphore = asyncio.Semaphore(1) # Prevent concurrent API calls (fixes 503 overflow)
 
