@@ -59,11 +59,11 @@ pipelog = logging.getLogger("pipecat")
 
 # A dedicated Mistral Cloud TTS service using direct API calls (SDK-less).
 class MistralCloudTTSService(TTSService):
-    def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "c69964a6-ab8b-4f8a-9465-ec0925096ec8", **kwargs):
+    def __init__(self, api_key: str, model: str = "voxtral-mini-tts-2603", voice: str = "01d985cd-5e0c-4457-bfd8-80ba31a5bc03", **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._model = model
-        self._requested_voice = voice.strip() if (voice and voice.strip()) else "c69964a6-ab8b-4f8a-9465-ec0925096ec8"
+        self._requested_voice = voice.strip() if (voice and voice.strip()) else "01d985cd-5e0c-4457-bfd8-80ba31a5bc03"
         self._active_voice = None # Discovered in real-time
         self._url_speech = "https://api.mistral.ai/v1/audio/speech"
         self._url_voices = "https://api.mistral.ai/v1/audio/voices?limit=100"
@@ -127,8 +127,8 @@ class MistralCloudTTSService(TTSService):
             pipelog.error(f"Error during Mistral voice discovery: {e}")
             
         if not self._active_voice:
-            self._active_voice = "c69964a6-ab8b-4f8a-9465-ec0925096ec8" # Hard fallback
-            pipelog.warning(f"Using default Paul voice ID: {self._active_voice}")
+            self._active_voice = "01d985cd-5e0c-4457-bfd8-80ba31a5bc03" # Hard fallback
+            pipelog.warning(f"Using default Paul Cheerful voice ID: {self._active_voice}")
 
     async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
         # Ensure we have a valid voice ID before calling speech API
@@ -561,7 +561,7 @@ if __name__ == "__main__":
                 for i, v in enumerate(voices):
                     print(f"[{i+1}] {v.get('name')} ({v.get('id')})", file=sys.stderr)
                 
-                print("\nSelect a voice number (or press Enter for Paul - Neutral): ", end="", file=sys.stderr)
+                print("\nSelect a voice number (or press Enter for Paul - Cheerful): ", end="", file=sys.stderr)
                 sys.stderr.flush()
                 import re
                 choice = sys.stdin.readline().strip()
