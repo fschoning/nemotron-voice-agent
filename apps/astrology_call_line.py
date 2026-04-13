@@ -462,14 +462,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     await runner.run(task)
 
 async def zoom_mode(runner_args: RunnerArguments, webhook_server: WebhookServer, transport: AttendeeTransport):
-    zoom_url = os.environ.get("ZOOM_SESSION_URL")
+    zoom_url = os.environ.get("ZOOM_SESSION_URL", "").strip().rstrip(".")
     bot_name = os.environ.get("ZOOM_BOT_NAME", "Vedic Pathway Astrologer")
     
     # Extract meeting ID from URL
     parsed_url = urllib.parse.urlparse(zoom_url)
     meeting_id = parsed_url.path.split("/")[-1].replace("-", "")
     
-    logger.info(f"Setting up zoom standby mode for meeting {meeting_id}")
+    logger.info(f"Setting up zoom standby mode for meeting {meeting_id} (URL: {zoom_url})")
     
     # Update webhook server to watch this specific meeting
     webhook_server.meeting_id_to_watch = meeting_id
@@ -519,8 +519,18 @@ async def zoom_mode(runner_args: RunnerArguments, webhook_server: WebhookServer,
     
     logger.info("🟡 STANDBY: Waiting for guest to join Zoom meeting...")
     
-    # Wait for join
-    await bot_ready_event.wait()
+    # Wait for either join or immediate failure
+    done, pending = await asyncio.wait(
+        [asyncio.create_task(bot_ready_event.wait()), 
+         asyncio.create_task(meeting_ended_event.wait())],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+    
+    # If meeting ended before we even joined, it was a failure
+    if meeting_ended_event.is_set() and not bot_ready_event.is_set():
+        logger.error("🔴 Bot failed to initialize. Exiting.")
+        await transport.stop()
+        return
     
     logger.info("🟢 Guest joined! Starting Pipecat pipeline...")
     
