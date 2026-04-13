@@ -210,7 +210,7 @@ class MistralCloudTTSService(TTSService):
                 
         yield TTSStoppedFrame()
 
-from pipecat.transports.services.daily import DailyTransport, DailyParams
+from pipecat.transports.daily.transport import DailyTransport, DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 
 from pipecat_bots.nvidia_stt import NVidiaWebSocketSTTService
@@ -597,5 +597,5 @@ if __name__ == "__main__":
     
     # 4. Start Daily Mode
     logger.info("🚀 Starting Daily orchestrator mode...")
-    runner_args = RunnerArguments(handle_sigint=True, pipeline_idle_timeout_secs=600)
+    runner_args = RunnerArguments()
     asyncio.run(bot(runner_args))
