@@ -314,8 +314,11 @@ async def call_mcp_tool(tool_name: str, args: dict):
         tool_call_queue.put_nowait((tool_name, args, future))
         result = await future
         try:
-            pretty_result = json.dumps(result, indent=2)
-            logger.info(f"✅ Tool {tool_name} returned:\n{pretty_result}")
+            if isinstance(result, dict) and "result" in result and isinstance(result["result"], str):
+                logger.info(f"✅ Tool {tool_name} returned:\n{result['result']}")
+            else:
+                pretty_result = json.dumps(result, indent=2)
+                logger.info(f"✅ Tool {tool_name} returned:\n{pretty_result}")
         except:
             logger.info(f"✅ Tool {tool_name} returned: {result}")
         return result
@@ -342,7 +345,7 @@ transport_params = {
 }
 
 async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
-    logger.info("Starting Vedic Astrologer interleaved streaming bot")
+    logger.info("Starting Vedic Pathway Astrologer interleaved streaming bot")
 
     # Create a mapping for sanitized names (Gemini requires underscores only)
     mcp_name_map = {}
@@ -394,7 +397,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
 
     messages = [
         {"role": "system", "content": full_prompt},
-        {"role": "user", "content": "A new caller has connected to the line. Please greet them warmly, state your identity as the Vedic Astrologer, and ask for their birth details to begin."},
+        {"role": "user", "content": "A new caller has connected to the line. You must immediately announce yourself: warmly greet them, state your identity as the Vedic Pathway Astrologer, and ask for their birth details to begin. You must not wait for them to speak first."},
     ]
 
     context = LLMContext(messages, tools=pipecat_tools)
@@ -472,7 +475,7 @@ async def daily_mode(runner_args: RunnerArguments):
             return
 
     logger.info(f"\n\n{'='*50}")
-    logger.info(f"🚀 VEDIC ASTROLOGER IS LIVE!")
+    logger.info(f"🚀 VEDIC PATHWAY ASTROLOGER IS LIVE!")
     logger.info(f"🔗 JOIN HERE: {room_url}")
     logger.info(f"{'='*50}\n")
 
@@ -485,7 +488,7 @@ async def daily_mode(runner_args: RunnerArguments):
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     )
-    transport = DailyTransport(room_url, None, "Vedic Astrologer", params)
+    transport = DailyTransport(room_url, None, "Vedic Pathway Astrologer", params)
 
     # 3. Running the pipeline
     try:
