@@ -63,7 +63,7 @@ class MistralCloudTTSService(TTSService):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._model = model
-        self._requested_voice = voice
+        self._requested_voice = voice.strip() if voice else None
         self._active_voice = None # Discovered in real-time
         self._url_speech = "https://api.mistral.ai/v1/audio/speech"
         self._url_voices = "https://api.mistral.ai/v1/audio/voices"
