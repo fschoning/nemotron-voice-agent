@@ -63,7 +63,7 @@ class MistralCloudTTSService(TTSService):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._model = model
-        self._requested_voice = voice.strip() if voice else None
+        self._requested_voice = voice.strip() if (voice and voice.strip()) else "c69964a6-ab8b-4f8a-9465-ec0925096ec8"
         self._active_voice = None # Discovered in real-time
         self._url_speech = "https://api.mistral.ai/v1/audio/speech"
         self._url_voices = "https://api.mistral.ai/v1/audio/voices?limit=100"
@@ -563,9 +563,12 @@ if __name__ == "__main__":
                 
                 print("\nSelect a voice number (or press Enter for Paul - Neutral): ", end="", file=sys.stderr)
                 sys.stderr.flush()
+                import re
                 choice = sys.stdin.readline().strip()
-                if choice.isdigit():
-                    idx = int(choice) - 1
+                # Extract only digits in case of ANSI up-arrows in buffer
+                clean_choice = re.sub(r'\D', '', choice)
+                if clean_choice:
+                    idx = int(clean_choice) - 1
                     if 0 <= idx < len(voices):
                         # Output ONLY the ID to stdout so start.sh can capture it
                         print(voices[idx]['id'])
