@@ -30,41 +30,43 @@ class WebhookServer:
         @self.app.post("/webhooks/zoom")
         async def zoom_webhook(request: Request, background_tasks: BackgroundTasks):
             body = await request.body()
-            logger.info(f"Received request on /webhooks/zoom: {body.decode('utf-8')}")
+            body_str = body.decode('utf-8')
+            logger.info(f"DRAIN: Received Zoom Webhook: {body_str}")
             
             payload = await request.json()
             event = payload.get("event")
             
-            # 1. Handle Endpoint Validation Challenge
-            if event == "endpoint.url_validation":
+            # Security: Validate Zoom Checksum
+            
+            if event in ["endpoint.url_validation"]:
                 plain_token = payload.get("payload", {}).get("plainToken")
-                encrypted_token = hmac.new(
-                    self.zoom_secret.encode('utf-8'),
-                    plain_token.encode('utf-8'),
-                    hashlib.sha256
-                ).hexdigest()
-                
-                return JSONResponse(content={
-                    "plainToken": plain_token,
-                    "encryptedToken": encrypted_token
-                })
+                mess = plain_token.encode("utf-8")
+                secret = self.zoom_secret.encode("utf-8")
+                hash_gen = hmac.new(secret, mess, hashlib.sha256).hexdigest()
+                return {"plainToken": plain_token, "encryptedToken": hash_gen}
 
-            # 2. Handle Participant Joined
-            if event == "meeting.participant_joined":
+            # Handle Join events
+            join_events = [
+                "meeting.participant_joined", 
+                "meeting.participant_waiting_for_host",
+                "meeting.participant_joined_waiting_room"
+            ]
+            
+            if event in join_events:
                 obj = payload.get("payload", {}).get("object", {})
                 meeting_id = str(obj.get("id")).replace("-", "")
                 
-                logger.info(f"Zoom webhook: Participant joined meeting {meeting_id}")
+                logger.info(f"Zoom event '{event}' for meeting {meeting_id}")
                 
                 if self.meeting_id_to_watch is None or meeting_id == self.meeting_id_to_watch:
                     participant_name = obj.get("participant", {}).get("user_name", "Unknown")
-                    logger.info(f"Join event for meeting {meeting_id} from {participant_name}! Triggering callback.")
+                    logger.info(f"Target meeting triggered by {participant_name} ({event})! Launching bot.")
                     if self.on_participant_joined:
                         background_tasks.add_task(self.on_participant_joined)
                 else:
-                    logger.debug(f"Ignoring join event for meeting {meeting_id} (watching {self.meeting_id_to_watch})")
+                    logger.debug(f"Ignoring event {event} for meeting {meeting_id} (watching {self.meeting_id_to_watch})")
             
-            return Response(status_code=200)
+            return {"status": "success"}
 
         @self.app.post("/webhooks/attendee")
         async def attendee_webhook(request: Request, background_tasks: BackgroundTasks):
