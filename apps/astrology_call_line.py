@@ -210,17 +210,13 @@ class MistralCloudTTSService(TTSService):
                 
         yield TTSStoppedFrame()
 
-from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.daily.transport import DailyParams
+from pipecat.transports.services.daily import DailyTransport, DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 
 from pipecat_bots.nvidia_stt import NVidiaWebSocketSTTService
 from pipecat_bots.magpie_websocket_tts import MagpieWebSocketTTSService
 from pipecat_bots.v2v_metrics import V2VMetricsProcessor
 from apps.prompts.vedic_astrologer import VEDIC_ASTROLOGER_AUDIO_PROMPT
-from transports.attendee_transport import AttendeeTransportParams, AttendeeTransport
-from transports.attendee_client import AttendeeClient
-from transports.attendee_webhooks import WebhookServer
 import urllib.parse
 
 load_dotenv(override=True)
@@ -338,27 +334,14 @@ transport_params = {
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
-    "twilio": lambda: FastAPIWebsocketParams(
-        audio_in_enabled=True, audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
-        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
-    ),
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
-    "attendee": lambda: AttendeeTransportParams(
-        audio_in_enabled=True, audio_out_enabled=True,
-        ws_port=int(os.environ.get("ATTENDEE_WS_PORT", "8765")),
-        ws_host="0.0.0.0",
-        sample_rate=16000,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
-        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
-    ),
 }
 
-async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
+async def run_bot(transport: DailyTransport, runner_args: RunnerArguments):
     logger.info("Starting Vedic Astrologer interleaved streaming bot")
 
     # Create a mapping for sanitized names (Gemini requires underscores only)
@@ -461,95 +444,62 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)
 
-async def zoom_mode(runner_args: RunnerArguments, webhook_server: WebhookServer, transport: AttendeeTransport):
-    zoom_url = os.environ.get("ZOOM_SESSION_URL", "").strip().rstrip(".")
-    bot_name = os.environ.get("ZOOM_BOT_NAME", "Vedic Pathway Astrologer")
-    
-    # Extract meeting ID from URL
-    parsed_url = urllib.parse.urlparse(zoom_url)
-    meeting_id = parsed_url.path.split("/")[-1].replace("-", "")
-    
-    logger.info(f"Setting up zoom standby mode for meeting {meeting_id} (URL: {zoom_url})")
-    
-    # Update webhook server to watch this specific meeting
-    webhook_server.meeting_id_to_watch = meeting_id
-    
-    # Setup Attendee client
-    attendee_api_key = os.environ.get("ATTENDEE_API_KEY", "")
-    public_url = os.environ.get("PUBLIC_URL", "https://attendee.vedicpathway.com")
-    attendee_client = AttendeeClient(attendee_api_key)
-    
-    transport_param_obj = transport_params["attendee"]()
-    transport = AttendeeTransport(transport_param_obj)
-    
-    bot_ready_event = asyncio.Event()
-    meeting_ended_event = asyncio.Event()
-    
-    async def on_join():
-        logger.info("Triggered on_join, setting up Attendee bot...")
-        try:
-            bot_data = await attendee_client.create_bot(
-                meeting_url=zoom_url,
-                bot_name=bot_name,
-                ws_url=f"wss://{public_url.replace('https://', '')}/attendee-audio",
-                webhook_url=f"{public_url}/webhooks/attendee"
-            )
-            bot_id = bot_data.get("id")
-            
-            # Save bot ID for stop script
-            os.makedirs("logs", exist_ok=True)
-            import json
-            with open("logs/attendee_bot.json", "w") as f:
-                json.dump({"bot_id": bot_id}, f)
-                
-            logger.info(f"Attendee bot created: {bot_id}")
-            bot_ready_event.set()
-        except Exception as e:
-            logger.error(f"Failed to create bot: {e}")
-            meeting_ended_event.set()
-            
-    async def on_end():
-        logger.info("Triggered on_end, stopping bot...")
-        meeting_ended_event.set()
-        
-    webhook_server.on_participant_joined = on_join
-    webhook_server.on_bot_ended = on_end
-    
-    await transport.start()
-    
-    logger.info("🟡 STANDBY: Waiting for guest to join Zoom meeting...")
-    
-    # Wait for either join or immediate failure
-    done, pending = await asyncio.wait(
-        [asyncio.create_task(bot_ready_event.wait()), 
-         asyncio.create_task(meeting_ended_event.wait())],
-        return_when=asyncio.FIRST_COMPLETED
-    )
-    
-    # If meeting ended before we even joined, it was a failure
-    if meeting_ended_event.is_set() and not bot_ready_event.is_set():
-        logger.error("🔴 Bot failed to initialize. Exiting.")
-        await transport.stop()
+async def daily_mode(runner_args: RunnerArguments):
+    """Orchestrates room creation and bot joining for Daily.co."""
+    api_key = os.environ.get("DAILY_API_KEY")
+    if not api_key:
+        logger.error("DAILY_API_KEY not found in environment.")
         return
-    
-    logger.info("🟢 Guest joined! Starting Pipecat pipeline...")
-    
-    run_task = asyncio.create_task(run_bot(transport, runner_args))
-    
-    # Wait for end
-    await meeting_ended_event.wait()
-    logger.info("🔴 Zoom meeting ended. Cleaning up and exiting.")
-    
-    # Teardown
-    run_task.cancel()
-    await transport.stop()
-    
-    sys.exit(0)
 
-async def bot(runner_args: RunnerArguments, webhook_server: WebhookServer = None):
+    # 1. Create a room on the fly
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(
+                "https://api.daily.co/v1/rooms",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "properties": {
+                        "exp": int(datetime.now().timestamp()) + 3600, # Expire in 1 hour
+                        "enable_chat": True,
+                    }
+                }
+            )
+            res.raise_for_status()
+            room_data = res.json()
+            room_url = room_data["url"]
+        except Exception as e:
+            logger.error(f"Failed to create Daily room: {e}")
+            return
+
+    logger.info(f"\n\n{'='*50}")
+    logger.info(f"🚀 VEDIC ASTROLOGER IS LIVE!")
+    logger.info(f"🔗 JOIN HERE: {room_url}")
+    logger.info(f"{'='*50}\n")
+
+    # 2. Setup Transport
+    params = DailyParams(
+        api_key=api_key,
+        room_url=room_url,
+        audio_in_enabled=True,
+        audio_out_enabled=True,
+        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
+    )
+    transport = DailyTransport(room_url, None, "Vedic Astrologer", params)
+
+    # 3. Running the pipeline
+    try:
+        await run_bot(transport, runner_args)
+    except Exception as e:
+        logger.error(f"Bot execution error: {e}")
+    finally:
+        # Cleanup Daily room
+        async with httpx.AsyncClient() as client:
+            await client.delete(f"https://api.daily.co/v1/rooms/{room_data['name']}", headers={"Authorization": f"Bearer {api_key}"})
+        logger.info("Daily room cleaned up. Peace out. ✌️")
+
+async def bot(runner_args: RunnerArguments):
     # FOR GOD'S SAKE, SILENCE THE LOGS.
-    # We do this here, INSIDE the bot function, because pipecat.runner.run.main() 
-    # clobbers any logging setup done at the module level.
     logging.getLogger("aiortc").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
     logging.getLogger("pipecat").setLevel(logging.INFO)
@@ -569,19 +519,8 @@ async def bot(runner_args: RunnerArguments, webhook_server: WebhookServer = None
         logger.error("Aborting Pipecat startup: No MCP session available.")
         return
 
-    if os.environ.get("ZOOM_SESSION_URL"):
-        # Bypass create_transport for Attendee integration
-        transport_param_obj = transport_params["attendee"]()
-        transport = AttendeeTransport(transport_param_obj)
-        try:
-            await zoom_mode(runner_args, webhook_server, transport)
-        finally:
-            mcp_task.cancel()
-        return
-
-    transport = await create_transport(runner_args, transport_params)
     try:
-        await run_bot(transport, runner_args)
+        await daily_mode(runner_args)
     finally:
         mcp_task.cancel()
 
@@ -656,38 +595,7 @@ if __name__ == "__main__":
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
     
-    # Start Webhook Server background for validation (satisfies Zoom)
-    # We do this here so it starts immediately, even before Pipecat runner.
-    webhook_port = int(os.environ.get("ATTENDEE_WEBHOOK_PORT", "8766"))
-    zoom_secret = os.environ.get("ZOOM_WEBHOOK_SECRET", "")
-    webhook_server = WebhookServer(webhook_port, zoom_secret)
-
-    if args.zoom:
-        # 4a. Zoom mode: Bypass standard runner and start bot() directly
-        logger.info(f"🚀 Starting Zoom standby mode for meeting {args.zoom}...")
-        runner_args = RunnerArguments()
-        # Set defaults if they are not already set correctly
-        if hasattr(runner_args, "pipeline_idle_timeout_secs"):
-            runner_args.pipeline_idle_timeout_secs = 600
-        if hasattr(runner_args, "handle_sigint"):
-            runner_args.handle_sigint = True
-        
-        async def zoom_init():
-            await webhook_server.start()
-            await bot(runner_args, webhook_server)
-            
-        asyncio.run(zoom_init())
-    else:
-        # 4b. Standard mode: Start webhook server in background thread, then start runner
-        import threading
-        def run_webhooks():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(webhook_server.start())
-            loop.run_forever()
-        
-        threading.Thread(target=run_webhooks, daemon=True).start()
-        
-        logger.info("🚀 Starting standard WebRTC/Daily mode...")
-        from pipecat.runner.run import main
-        main()
+    # 4. Start Daily Mode
+    logger.info("🚀 Starting Daily orchestrator mode...")
+    runner_args = RunnerArguments(handle_sigint=True, pipeline_idle_timeout_secs=600)
+    asyncio.run(bot(runner_args))

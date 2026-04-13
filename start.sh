@@ -35,29 +35,11 @@ else
     echo "⚠️ Warning: .venv not found. Running with system python."
 fi
 
-ZOOM_ARG=""
-BOT_NAME_ARG="Vedic Pathway Astrologer"
-
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --zoom) ZOOM_ARG="$2"; shift ;;
-        --bot-name) BOT_NAME_ARG="$2"; shift ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
-    esac
-    shift
-done
-
-if [ -z "$ZOOM_ARG" ]; then
-    echo "🚀 Initializing voice selection..."
-    export MISTRAL_VOICE_ID=$(python3 apps/astrology_call_line.py --voice-selector)
-    echo "🚀 Starting Vedic Astrology Call Line..."
-    echo "Log file: $LOG_FILE"
-    nohup python3 apps/astrology_call_line.py > "$LOG_FILE" 2>&1 &
-else
-    echo "🚀 Starting Zoom standby mode..."
-    echo "Log file: $LOG_FILE"
-    nohup python3 apps/astrology_call_line.py --zoom "$ZOOM_ARG" --bot-name "$BOT_NAME_ARG" > "$LOG_FILE" 2>&1 &
-fi
+echo "🚀 Initializing voice selection..."
+export MISTRAL_VOICE_ID=$(python3 apps/astrology_call_line.py --voice-selector)
+echo "🚀 Starting Vedic Astrology Call Line (Daily.co Mode)..."
+echo "Log file: $LOG_FILE"
+nohup python3 apps/astrology_call_line.py > "$LOG_FILE" 2>&1 &
 
 BOT_PID=$!
 
