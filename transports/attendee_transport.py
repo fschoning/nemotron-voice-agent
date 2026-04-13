@@ -49,7 +49,7 @@ class AttendeeTransport(BaseTransport):
     """Transport for bridging Pipecat with Attendee's WebSocket audio protocol."""
 
     def __init__(self, params: AttendeeTransportParams):
-        super().__init__(params)
+        super().__init__()
         self.params = params
         self.connections: dict[str, websockets.WebSocketServerProtocol] = {}
         self._ws_server = None
