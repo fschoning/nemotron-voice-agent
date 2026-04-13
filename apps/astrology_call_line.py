@@ -651,10 +651,12 @@ if __name__ == "__main__":
     if args.zoom:
         # 4a. Zoom mode: Bypass standard runner and start bot() directly
         logger.info(f"🚀 Starting Zoom standby mode for meeting {args.zoom}...")
-        runner_args = RunnerArguments(
-            pipeline_idle_timeout_secs=600,
-            handle_sigint=True
-        )
+        runner_args = RunnerArguments()
+        # Set defaults if they are not already set correctly
+        if hasattr(runner_args, "pipeline_idle_timeout_secs"):
+            runner_args.pipeline_idle_timeout_secs = 600
+        if hasattr(runner_args, "handle_sigint"):
+            runner_args.handle_sigint = True
         
         async def zoom_init():
             await webhook_server.start()
