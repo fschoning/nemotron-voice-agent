@@ -580,19 +580,36 @@ async def daily_mode(runner_args: RunnerArguments, session_data: dict = None, te
     # 1. Create a room on the fly
     async with httpx.AsyncClient() as client:
         try:
+            room_config = {
+                "properties": {
+                    "exp": int(datetime.now().timestamp()) + 3600, # Expire in 1 hour
+                    "enable_chat": True,
+                }
+            }
+            if appt_uid:
+                room_config["name"] = appt_uid
+                
             res = await client.post(
                 "https://api.daily.co/v1/rooms",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "properties": {
-                        "exp": int(datetime.now().timestamp()) + 3600, # Expire in 1 hour
-                        "enable_chat": True,
-                    }
-                }
+                json=room_config
             )
             res.raise_for_status()
             room_data = res.json()
             room_url = room_data["url"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400 and "already exists" in e.response.text:
+                logger.warning(f"Room {appt_uid} already exists, fetching existing room URL.")
+                res = await client.get(
+                    f"https://api.daily.co/v1/rooms/{appt_uid}",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                res.raise_for_status()
+                room_data = res.json()
+                room_url = room_data["url"]
+            else:
+                logger.error(f"Failed to create Daily room: {e}")
+                return
         except Exception as e:
             logger.error(f"Failed to create Daily room: {e}")
             return
