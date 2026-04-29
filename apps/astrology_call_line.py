@@ -240,7 +240,7 @@ load_dotenv(override=True)
 NVIDIA_ASR_URL = os.getenv("NVIDIA_ASR_URL", "ws://127.0.0.1:8080")
 NVIDIA_TTS_URL = os.getenv("NVIDIA_TTS_URL", "http://127.0.0.1:8001")
 MCP_SERVER_URL = "http://192.168.1.121:16080/mcp/sse"
-INTERNALWS_BASE_URL = os.getenv("INTERNALWS_BASE_URL", "http://192.168.1.121:8080/coachautomator-internalws/api")
+INTERNALWS_BASE_URL = os.getenv("INTERNALWS_BASE_URL", "http://192.168.2.10:17080/internalws")
 ENABLE_RECORDING = os.getenv("ENABLE_RECORDING", "false").lower() == "true"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 VAD_STOP_SECS = 0.2
