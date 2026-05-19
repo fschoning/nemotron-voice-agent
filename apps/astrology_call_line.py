@@ -268,26 +268,14 @@ async def save_audio_file(audio: bytes, sample_rate: int, num_channels: int, fil
     except Exception as e:
         logger.error(f"Failed to save recording: {e}")
 
-async def fetch_consultation_data(tenant: str, appt_uid: str):
-    url = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/session"
-    logger.info(f"Fetching consultation session data from: {url}")
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(url, timeout=10.0)
-            res.raise_for_status()
-            data = res.json()
-            logger.info("✅ Successfully fetched consultation data.")
-            return data
-        except Exception as e:
-            logger.error(f"❌ Failed to fetch session data from REST API: {e}")
-            return None
+
 
 async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, attended: bool):
     if not tenant or not appt_uid or tenant == "demo":
         logger.info("Skipping CRM write-back (demo mode or missing UID).")
         return
     
-    logger.info(f"Finalizing session to CRM for {tenant}/{appt_uid}")
+    logger.info(f"Posting transcript to CRM for {tenant}/{appt_uid}")
     
     entries = []
     for msg in context.messages:
@@ -309,19 +297,13 @@ async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, atte
         "final": True
     }
     
-    status = {"status": "COMPLETED" if attended else "CANCELLED"}
-    
     async with httpx.AsyncClient() as client:
         try:
             url_trans = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/transcript"
             await client.post(url_trans, json=transcript, timeout=10.0)
             logger.info("✅ Saved transcript to CRM")
-            
-            url_stat = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/status"
-            await client.put(url_stat, json=status, timeout=10.0)
-            logger.info("✅ Updated status in CRM")
         except Exception as e:
-            logger.error(f"❌ Failed to finalize session: {e}")
+            logger.error(f"❌ Failed to post transcript: {e}")
 
 # --- Isolated MCP Event Loop ---
 async def manage_mcp_connection():
@@ -547,18 +529,27 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         observers=[RTVIObserver(rtvi)], idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
+    # Track if the bot has greeted the user yet
+    has_greeted = False
+
     @rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
+        nonlocal has_greeted
         logger.info("RTVI client ready")
         if audiobuffer: await audiobuffer.start_recording()
         await rtvi.set_bot_ready()
-        await task.queue_frames([LLMRunFrame()])
+        if not has_greeted:
+            has_greeted = True
+            await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
+        nonlocal has_greeted
         logger.info(f"First participant joined: {participant['id']}")
         if audiobuffer: await audiobuffer.start_recording()
-        await task.queue_frames([LLMRunFrame()])
+        if not has_greeted:
+            has_greeted = True
+            await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -569,58 +560,15 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)
 
-async def daily_mode(runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
-    """Orchestrates room creation and bot joining for Daily.co."""
-    api_key = os.environ.get("DAILY_API_KEY")
-    if not api_key:
-        logger.error("DAILY_API_KEY not found in environment.")
-        return
-
-    # 1. Create a room on the fly
-    async with httpx.AsyncClient() as client:
-        try:
-            room_config = {
-                "properties": {
-                    "exp": int(datetime.now().timestamp()) + 3600, # Expire in 1 hour
-                    "enable_chat": True,
-                }
-            }
-            if appt_uid:
-                room_config["name"] = appt_uid
-                
-            res = await client.post(
-                "https://api.daily.co/v1/rooms",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=room_config
-            )
-            res.raise_for_status()
-            room_data = res.json()
-            room_url = room_data["url"]
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400 and "already exists" in e.response.text:
-                logger.warning(f"Room {appt_uid} already exists, fetching existing room URL.")
-                res = await client.get(
-                    f"https://api.daily.co/v1/rooms/{appt_uid}",
-                    headers={"Authorization": f"Bearer {api_key}"}
-                )
-                res.raise_for_status()
-                room_data = res.json()
-                room_url = room_data["url"]
-            else:
-                logger.error(f"Failed to create Daily room: {e}")
-                return
-        except Exception as e:
-            logger.error(f"Failed to create Daily room: {e}")
-            return
-
+async def join_room(room_url: str, runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
+    """Joins an existing Daily.co room. Does NOT create or delete the room."""
     logger.info(f"\n\n{'='*50}")
     logger.info(f"🚀 VEDIC PATHWAY ASTROLOGER IS LIVE!")
-    logger.info(f"🔗 JOIN HERE: {room_url}")
+    logger.info(f"🔗 JOINING ROOM: {room_url}")
     logger.info(f"{'='*50}\n")
 
     # 2. Setup Transport
     params = DailyParams(
-        api_key=api_key,
         room_url=room_url,
         audio_in_enabled=True,
         audio_out_enabled=True,
@@ -635,25 +583,15 @@ async def daily_mode(runner_args: RunnerArguments, session_data: dict = None, te
     except Exception as e:
         logger.error(f"Bot execution error: {e}")
     finally:
-        # Cleanup Daily room
-        async with httpx.AsyncClient() as client:
-            await client.delete(f"https://api.daily.co/v1/rooms/{room_data['name']}", headers={"Authorization": f"Bearer {api_key}"})
-        logger.info("Daily room cleaned up. Peace out. ✌️")
+        logger.info("Left Daily room. Peace out. ✌️")
 
-async def bot(runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
-    # FOR GOD'S SAKE, SILENCE THE LOGS.
-    logging.getLogger("aiortc").setLevel(logging.WARNING)
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    logging.getLogger("pipecat").setLevel(logging.INFO)
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", filter=lambda record: 
-               "pipecat.transports.smallwebrtc" not in record["name"] and 
-               "pipecat.runner" not in record["name"] and
-               "pipecat.services" not in record["name"])
-
+async def bot(runner_args: RunnerArguments, room_url: str, session_data: dict = None, tenant: str = None, appt_uid: str = None):
     # Idiomatic Pipecat Init: Dependencies first, Transport second, Task third.
-    global tool_call_queue
+    global tool_call_queue, mcp_session
     tool_call_queue = asyncio.Queue()
+    mcp_ready_event.clear()
+    mcp_session = None
+    
     mcp_task = asyncio.create_task(manage_mcp_connection())
     await mcp_ready_event.wait()
 
@@ -662,7 +600,7 @@ async def bot(runner_args: RunnerArguments, session_data: dict = None, tenant: s
         return
 
     try:
-        await daily_mode(runner_args, session_data, tenant, appt_uid)
+        await join_room(room_url, runner_args, session_data, tenant, appt_uid)
     finally:
         mcp_task.cancel()
 
@@ -742,12 +680,17 @@ if __name__ == "__main__":
     # 3. Clean up sys.argv so pipecat's main() doesn't complain about unknown args
     sys.argv = [sys.argv[0]] + unknown
     
-    # 4. Fetch dynamic session context if appointment-uid is provided
+    # 4. We don't fetch data locally anymore, it comes from the webhook
+    # For local CLI testing, we'll just mock it or skip
     session_data = None
-    if args.appointment_uid:
-        session_data = asyncio.run(fetch_consultation_data(args.tenant, args.appointment_uid))
     
     # 5. Start Daily Mode
-    logger.info("🚀 Starting Daily orchestrator mode...")
+    logger.info("🚀 Starting test mode (Requires manual room URL)")
     runner_args = RunnerArguments()
-    asyncio.run(bot(runner_args, session_data, args.tenant, args.appointment_uid))
+    
+    # Note: For CLI execution you must provide a room URL somehow if not using webhook
+    room_url = os.getenv("TEST_ROOM_URL")
+    if room_url:
+        asyncio.run(bot(runner_args, room_url, session_data, args.tenant, args.appointment_uid))
+    else:
+        logger.error("TEST_ROOM_URL env var required for direct execution. Use webhook_server.py in production.")

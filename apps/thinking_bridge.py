@@ -49,9 +49,13 @@ You must REFUSE to analyse the following topics, even if directly asked:
 If any of these are requested, output a polite refusal directing them to a relevant human professional.
 """
         
-        # 3. Setup history
+        # 3. Setup Guardrail Prompt & History
+        self.guardrail_prompt = "You are a guardrail and question sanitiser."
         history = []
         if session_data:
+            if session_data.get("guardrailPrompt"):
+                self.guardrail_prompt = session_data.get("guardrailPrompt")
+                
             persons = session_data.get("persons", [])
             for person in persons:
                 primed_analysis = person.get("primedAnalysis", None)
@@ -72,7 +76,7 @@ If any of these are requested, output a polite refusal directing them to a relev
         logger.info(f"🤔 Flash requested analysis: {question}")
         
         # Layer 2 Guardrail: Sanitiser
-        sanitised = sanitise_question(question)
+        sanitised = sanitise_question(question, self.guardrail_prompt)
         if sanitised.startswith("BLOCKED:"):
             logger.warning(f"🚫 Question blocked by sanitiser: {sanitised}")
             msg = self._get_block_rejection_message(sanitised.split(":")[1])
