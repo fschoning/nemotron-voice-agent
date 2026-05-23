@@ -453,8 +453,12 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     primed_analysis = ""
     
     if session_data:
+        logger.info(f"Loaded session_data keys: {list(session_data.keys())}")
         if session_data.get("voicePrompt"):
             voice_prompt_text = session_data.get("voicePrompt")
+            logger.info(f"✅ Voice prompt overridden from session data (len: {len(voice_prompt_text)}). First 100 chars: {voice_prompt_text[:100].strip()}...")
+        else:
+            logger.warning("⚠️ No voicePrompt found in session data! Using hardcoded fallback.")
         if session_data.get("brainPrompt"):
             brain_prompt_text = session_data.get("brainPrompt")
         if session_data.get("guardrailPrompt"):

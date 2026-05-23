@@ -53,6 +53,9 @@ If any of these are requested, output a polite refusal directing them to a relev
         self.guardrail_prompt = "You are a guardrail and question sanitiser."
         history = []
         if session_data:
+            if session_data.get("brainPrompt"):
+                system_instruction = session_data.get("brainPrompt")
+                logger.info("✅ Brain prompt (system instruction) overridden from session data.")
             if session_data.get("guardrailPrompt"):
                 self.guardrail_prompt = session_data.get("guardrailPrompt")
                 
