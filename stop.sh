@@ -14,8 +14,7 @@ PID_FILE="$PROJECT_ROOT/logs/astrology_bot.pid"
 if [ ! -f "$PID_FILE" ]; then
     echo "⚠️ No PID file found at $PID_FILE. Astrology bot might not be running."
     
-    # Fallback to pgrep
-    PID=$(pgrep -f "apps/astrology_call_line.py") || true
+    PID=$(pgrep -f "webhook_server.py") || PID=$(pgrep -f "apps/astrology_call_line.py") || true
     if [ -n "$PID" ]; then
         echo "Found process via pgrep: $PID"
     else

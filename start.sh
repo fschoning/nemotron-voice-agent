@@ -37,9 +37,9 @@ fi
 
 echo "🚀 Initializing voice selection..."
 export MISTRAL_VOICE_ID=$(python3 apps/astrology_call_line.py --voice-selector)
-echo "🚀 Starting Vedic Astrology Call Line (Daily.co Mode)..."
+echo "🚀 Starting Vedic Astrology Call Line (Webhook Mode on Port 8090)..."
 echo "Log file: $LOG_FILE"
-nohup python3 apps/astrology_call_line.py > "$LOG_FILE" 2>&1 &
+nohup python3 webhook_server.py > "$LOG_FILE" 2>&1 &
 
 BOT_PID=$!
 
