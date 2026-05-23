@@ -32,7 +32,7 @@ class ThinkingBridge:
 
         # 2. Build system instruction with guardrails and session context
         system_instruction = """
-You are the Deep Thinking Vedic Astrology Brain (Gemini 3.1 Pro).
+You are the Deep Thinking Vedic Astrology Brain (Gemini 3.1 Pro Preview).
 You have access to Jyotish MCP tools. Use them to calculate Native Charts, Dashas, Transits, and Compatibility.
 
 ## GUARDRAILS - PROHIBITED TOPICS (LAYER 3)
@@ -72,7 +72,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                 history.append({"role": "model", "parts": ["Acknowledged. I have the pre-call analysis in my context."]})
 
         self.thinking_model = genai.GenerativeModel(
-            model_name='gemini-3.1-pro',
+            model_name='gemini-3.1-pro-preview',
             system_instruction=system_instruction,
             tools=self.gemini_tools if self.gemini_tools else None
         )
