@@ -50,21 +50,26 @@ If any of these are requested, output a polite refusal directing them to a relev
 """
         
         # 3. Setup Guardrail Prompt & History
-        self.guardrail_prompt = "You are a guardrail and question sanitiser."
+        if not session_data:
+            raise ValueError("FATAL: session_data is missing in ThinkingBridge! Cannot initialize without CRM session context.")
+            
+        system_instruction = session_data.get("brainPrompt")
+        if not system_instruction or not system_instruction.strip():
+            raise ValueError("FATAL: 'brainPrompt' is missing or empty in session_data for ThinkingBridge!")
+            
+        self.guardrail_prompt = session_data.get("guardrailPrompt")
+        if not self.guardrail_prompt or not self.guardrail_prompt.strip():
+            raise ValueError("FATAL: 'guardrailPrompt' is missing or empty in session_data for ThinkingBridge!")
+            
+        logger.info("✅ Brain prompt and Guardrail prompt successfully loaded into ThinkingBridge.")
         history = []
-        if session_data:
-            if session_data.get("brainPrompt"):
-                system_instruction = session_data.get("brainPrompt")
-                logger.info("✅ Brain prompt (system instruction) overridden from session data.")
-            if session_data.get("guardrailPrompt"):
-                self.guardrail_prompt = session_data.get("guardrailPrompt")
-                
-            persons = session_data.get("persons", [])
-            for person in persons:
-                primed_analysis = person.get("primedAnalysis", None)
-                if primed_analysis and "analysis" in primed_analysis:
-                    history.append({"role": "user", "parts": [f"Pre-call analysis for {person.get('firstName')}:\n{primed_analysis['analysis']}"]})
-                    history.append({"role": "model", "parts": ["Acknowledged. I have the pre-call analysis in my context."]})
+        
+        persons = session_data.get("persons", [])
+        for person in persons:
+            primed_analysis = person.get("primedAnalysis", None)
+            if primed_analysis and "analysis" in primed_analysis:
+                history.append({"role": "user", "parts": [f"Pre-call analysis for {person.get('firstName')}:\n{primed_analysis['analysis']}"]})
+                history.append({"role": "model", "parts": ["Acknowledged. I have the pre-call analysis in my context."]})
 
         self.thinking_model = genai.GenerativeModel(
             model_name='gemini-3.1-pro',
