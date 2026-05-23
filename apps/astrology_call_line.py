@@ -397,6 +397,17 @@ transport_params = {
 async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
     logger.info("Starting Vedic Pathway Astrologer interleaved streaming bot")
 
+    if not session_data:
+        raise ValueError("FATAL: session_data is missing! Cannot start consultation without CRM session context.")
+
+    # Read voice ID from session data, fallback to Paul Cheerful
+    voice_id = session_data.get("voiceId")
+    if not voice_id or not voice_id.strip():
+        voice_id = "01d985cd-5e0c-4457-bfd8-80ba31a5bc03" # Paul - Cheerful fallback
+        logger.info(f"Using default fallback voice (Paul - Cheerful): {voice_id}")
+    else:
+        logger.info(f"✅ Voice fetched dynamically from session data: {voice_id}")
+
     pipecat_tools = ToolsSchema(standard_tools=[
         FunctionSchema(
             name="request_analysis",
@@ -423,7 +434,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         tts = MistralCloudTTSService(
             api_key=os.environ.get("MISTRAL_API_KEY"),
             model="voxtral-mini-tts-2603",
-            voice=os.environ.get("MISTRAL_VOICE_ID", "paul")
+            voice=voice_id
         )
 
     v2v_metrics = V2VMetricsProcessor(vad_stop_secs=VAD_STOP_SECS)
@@ -446,9 +457,6 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     scheduled_start = "N/A"
     scheduled_end = "N/A"
     
-    if not session_data:
-        raise ValueError("FATAL: session_data is missing! Cannot start consultation without CRM session context.")
-        
     logger.info(f"Loaded session_data keys: {list(session_data.keys())}")
     
     voice_prompt_text = session_data.get("voicePrompt")
