@@ -4,7 +4,7 @@ import asyncio
 import google.generativeai as genai
 from google.generativeai.types import content_types
 from loguru import logger
-from sanitiser import sanitise_question
+from apps.sanitiser import sanitise_question
 
 class ThinkingBridge:
     def __init__(self, mcp_tools_cache, mcp_call_callback, session_data=None):
