@@ -492,26 +492,58 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     if session_data.get("scheduledEnd"):
         scheduled_end = session_data.get("scheduledEnd")
         
+    primed_analysis = ""
     persons = session_data.get("persons", [])
     if persons and len(persons) > 0:
-        primed_analysis = persons[0].get("primedAnalysis", "")
-        if primed_analysis:
-            logger.info("✅ Loaded primed analysis from session data.")
+        p = persons[0]
+        primed_analysis_obj = p.get("primedAnalysis", None)
+        if primed_analysis_obj and isinstance(primed_analysis_obj, dict):
+            primed_analysis = primed_analysis_obj.get("analysis", "")
+            
+    is_primed = bool(primed_analysis and primed_analysis.strip())
     
     DISCLAIMER = "All insights provided in this consultation are based on traditional Vedic astrological principles and are offered for educational and entertainment purposes only. They should not be used as a substitute for professional medical, legal, financial, or psychological advice. For important life decisions, always consult a qualified human professional."
 
-    # Inject context into the voice prompt
-    full_prompt = f"{voice_prompt_text}\n\n{DISCLAIMER}\n\n**IMPORTANT SESSION CONTEXT:** The client's current timezone is {client_zone} and their current local time is {current_time} on {current_date}. When calling astrological tools, ALWAYS pass '{client_zone}' as the `reportingTimezoneId` so the planetary data you receive is pre-formatted for their wall clock."
+    # Background task to cancel after speaking completes (approx 12s)
+    async def delayed_abort():
+        await asyncio.sleep(12.0)
+        logger.info("⏱️ Delayed abort timer fired. Cancelling pipeline task...")
+        await task.cancel()
 
-    if scheduled_start != "N/A":
-        full_prompt += f"\n- Scheduled Start: {scheduled_start}"
-    if scheduled_end != "N/A":
-        full_prompt += f"\n- Scheduled End: {scheduled_end}"
+    if not is_primed:
+        logger.error("❌ FATAL: Pre-call priming analysis is missing or incomplete! Aborting meeting.")
+        
+        # Enforce error instruction system prompt and greeting for Flash model
+        full_prompt = "You are a customer service assistant. Due to technical difficulties, you must state exactly this message and nothing else: 'I apologize, but due to technical difficulties, we cannot proceed with your Vedic Astrology consultation today. Please contact support to reschedule. Goodbye.'"
+        
+        messages = [
+            {"role": "system", "content": full_prompt},
+            {"role": "user", "content": "The client has connected. You must immediately state your technical apology and say goodbye. Do not wait for them to speak."}
+        ]
+    else:
+        # Build native details context for the Flash voice model
+        p = persons[0]
+        person_details = f"""
+**NATIVE DETAILS FOR THE SESSION:**
+- Name: {p.get('firstName', '')} {p.get('lastName', '')}
+- Birth Date: {p.get('birthDate', 'N/A')}
+- Birth Time: {p.get('birthTime', 'N/A')}
+- Birth Place: {p.get('birthPlace', 'N/A')}
+"""
+        
+        # Inject details and primed analysis into the dynamic voice prompt
+        full_prompt = f"{voice_prompt_text}\n\n{DISCLAIMER}\n\n{person_details}\n\n**PRE-COMPUTED PRIMED ANALYSIS:**\n{primed_analysis}\n\n**IMPORTANT SESSION CONTEXT:** The client's current timezone is {client_zone} and their current local time is {current_time} on {current_date}. When calling astrological tools, ALWAYS pass '{client_zone}' as the `reportingTimezoneId` so the planetary data you receive is pre-formatted for their wall clock."
 
-    messages = [
-        {"role": "system", "content": full_prompt},
-        {"role": "user", "content": "A new caller has connected to the line. You must immediately announce yourself: warmly greet them, state your identity as the Vedic Pathway Astrologer, and ask for their birth details to begin. You must not wait for them to speak first."},
-    ]
+        if scheduled_start != "N/A":
+            full_prompt += f"\n- Scheduled Start: {scheduled_start}"
+        if scheduled_end != "N/A":
+            full_prompt += f"\n- Scheduled End: {scheduled_end}"
+
+        first_name = p.get('firstName', 'there')
+        messages = [
+            {"role": "system", "content": full_prompt},
+            {"role": "user", "content": f"A new caller ({first_name}) has connected to the line. You must immediately announce yourself: warmly greet them by name, state your identity as the Vedic Pathway Astrologer, and mention that you have their native chart cast and pre-call analysis ready. Ask them how they would like to begin today. DO NOT ask for their birth details since you already have them in your context!"},
+        ]
 
     context = LLMContext(messages, tools=pipecat_tools)
     context_aggregator = LLMContextAggregatorPair(context)
@@ -559,6 +591,8 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         if not has_greeted:
             has_greeted = True
             await task.queue_frames([LLMRunFrame()])
+            if not is_primed:
+                asyncio.create_task(delayed_abort())
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
@@ -568,6 +602,8 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         if not has_greeted:
             has_greeted = True
             await task.queue_frames([LLMRunFrame()])
+            if not is_primed:
+                asyncio.create_task(delayed_abort())
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
