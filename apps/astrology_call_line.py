@@ -471,7 +471,11 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     if not guardrail_prompt_text or not guardrail_prompt_text.strip():
         raise ValueError("FATAL: 'guardrailPrompt' is missing or empty in session_data! Prompts must be pulled from the Java CRM configuration.")
         
-    logger.info(f"✅ Voice prompt successfully loaded from session data (len: {len(voice_prompt_text)}). First 100 chars: {voice_prompt_text[:100].strip()}...")
+    logger.info("==================== [CRM PROMPTS DETAILED LOG] ====================")
+    logger.info(f"--- VOICE PROMPT (Client-Side Flash Model) ---\n{voice_prompt_text}")
+    logger.info(f"--- BRAIN PROMPT (Thinking Pro Model) ---\n{brain_prompt_text}")
+    logger.info(f"--- GUARDRAIL PROMPT (Sanitiser Model) ---\n{guardrail_prompt_text}")
+    logger.info("====================================================================")
     primed_analysis = ""
     
     if session_data.get("clientZoneId"):
