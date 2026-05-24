@@ -139,7 +139,7 @@ class MistralCloudTTSService(TTSService):
             self._active_voice = "01d985cd-5e0c-4457-bfd8-80ba31a5bc03" # Hard fallback
             pipelog.warning(f"Using default Paul Cheerful voice ID: {self._active_voice}")
 
-    async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
+    async def _run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
         # Ensure we have a valid voice ID before calling speech API
         await self._discover_voice()
         
