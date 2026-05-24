@@ -21,8 +21,8 @@ from mcp.client.sse import sse_client
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import Frame, InputAudioRawFrame, LLMRunFrame, StartFrame
@@ -397,12 +397,10 @@ transport_params = {
     "daily": lambda: DailyParams(
         audio_in_enabled=True, audio_out_enabled=True,
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
-        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
-        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
 }
 
@@ -640,6 +638,9 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         user_params=LLMUserAggregatorParams(
             user_idle_timeout=6.0,
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+            user_turn_strategies=UserTurnStrategies(
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
+            )
         ),
         assistant_params=LLMAssistantAggregatorParams(
             enable_auto_context_summarization=True,
@@ -654,8 +655,9 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
-        model="gemini-2.5-flash", 
-        run_in_parallel=False
+        settings=GoogleLLMService.Settings(model="gemini-2.5-flash"),
+        run_in_parallel=False,
+        tools=pipecat_tools
     )
 
     transcripts_dir = Path(__file__).parent.parent / "transcripts"
@@ -742,7 +744,6 @@ async def join_room(room_url: str, runner_args: RunnerArguments, session_data: d
         audio_in_enabled=True,
         audio_out_enabled=True,
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
-        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     )
     
     # Resolve the astrologer's display name dynamically
