@@ -94,19 +94,9 @@ If any of these are requested, output a polite refusal directing them to a relev
         question = params.arguments.get("question", "")
         logger.info(f"🤔 Flash requested analysis: {question}")
         
-        # Layer 2 Guardrail: Sanitiser
-        sanitised = sanitise_question(question, self.guardrail_prompt)
-        if sanitised.startswith("BLOCKED:"):
-            logger.warning(f"🚫 Question blocked by sanitiser: {sanitised}")
-            msg = self._get_block_rejection_message(sanitised.split(":")[1])
-            await params.result_callback({"result": msg})
-            return
-
-        logger.info(f"🤔 Sanitised query passing to Pro: {sanitised}")
-        
         # Start the background deep-thinking calculation coroutine (non-blocking)
         self._active_analysis_task = asyncio.create_task(
-            self._run_background_pro_analysis(sanitised)
+            self._run_background_pro_analysis(question)
         )
         
         # Return immediately to the front-end LLM.
@@ -120,11 +110,47 @@ If any of these are requested, output a polite refusal directing them to a relev
             )
         })
 
-    async def _run_background_pro_analysis(self, sanitised):
+    async def _run_background_pro_analysis(self, question):
         """Background calculation task running the heavy Gemini Pro / MCP tools."""
         try:
             logger.info("🧠 Brain background calculation started...")
-            response = self.chat.send_message(sanitised, tools=self.gemini_tools, request_options={"timeout": 600.0})
+            
+            # 1. Run the Sanitiser model (via asyncio.to_thread to keep the main event loop completely free)
+            sanitised = await asyncio.to_thread(
+                sanitise_question,
+                question,
+                self.guardrail_prompt
+            )
+            
+            if sanitised.startswith("BLOCKED:"):
+                logger.warning(f"🚫 Question blocked by sanitiser in background: {sanitised}")
+                rejection_reason = sanitised.split(":")[1]
+                msg = self._get_block_rejection_message(rejection_reason)
+                
+                # Inject the block message and trigger LLM turn
+                if self.context:
+                    self.context.messages.append({
+                        "role": "system",
+                        "content": (
+                            f"The client's question was flagged as prohibited. You must politely refuse "
+                            f"to answer the question and direct them appropriately. Use this exact reasoning: "
+                            f"'{msg}'. Speak warmly and professionally in your unique character."
+                        )
+                    })
+                if self.pipeline_task:
+                    from pipecat.frames.frames import LLMRunFrame
+                    await self.pipeline_task.queue_frames([LLMRunFrame()])
+                return
+
+            logger.info(f"🤔 Sanitised query passing to Pro: {sanitised}")
+            
+            # 2. Run the Pro model (via asyncio.to_thread)
+            response = await asyncio.to_thread(
+                self.chat.send_message,
+                sanitised,
+                tools=self.gemini_tools if self.gemini_tools else None,
+                request_options={"timeout": 600.0}
+            )
             
             # Process potential tool calls in a loop until we get text
             while self._get_function_calls(response):
@@ -143,6 +169,9 @@ If any of these are requested, output a polite refusal directing them to a relev
                     except asyncio.TimeoutError:
                         logger.error(f"❌ MCP Tool {original_name} timed out after 300 seconds.")
                         mcp_res = "Error: Tool execution timed out after 300 seconds."
+                    except Exception as e:
+                        logger.error(f"❌ Error executing MCP tool {original_name}: {e}")
+                        mcp_res = f"Error executing tool: {e}"
                     
                     # Gemini expects the result as a dict
                     tool_results.append(
@@ -152,13 +181,17 @@ If any of these are requested, output a polite refusal directing them to a relev
                         )
                     )
                 
-                # Send the tool results back to the model
-                response = self.chat.send_message(tool_results, request_options={"timeout": 600.0})
+                # Send the tool results back to the model (via asyncio.to_thread)
+                response = await asyncio.to_thread(
+                    self.chat.send_message,
+                    tool_results,
+                    request_options={"timeout": 600.0}
+                )
 
             final_text = response.text
             logger.info(f"🧠 Pro answered in background: {final_text}")
             
-            # 1. Inject the result into the front-end LLM context messages history
+            # 3. Inject the result into the front-end LLM context messages history
             if self.context:
                 self.context.messages.append({
                     "role": "system",
@@ -170,7 +203,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                 })
                 logger.info("📝 Successfully injected brain findings into front-end LLM context.")
             
-            # 2. Trigger a new LLM generation turn on the front-end model to deliver the text in character
+            # 4. Trigger a new LLM generation turn on the front-end model to deliver the text in character
             if self.pipeline_task:
                 from pipecat.frames.frames import LLMRunFrame
                 await self.pipeline_task.queue_frames([LLMRunFrame()])
