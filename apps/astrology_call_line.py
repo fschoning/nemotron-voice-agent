@@ -31,7 +31,14 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMAssistantAggregatorParams,
+)
+from pipecat.utils.context.llm_context_summarization import (
+    LLMAutoContextSummarizationConfig,
+    LLMContextSummaryConfig,
+)
 from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
@@ -440,6 +447,10 @@ class TokenUsageMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
         
+        # Clean up dynamic system messages if any assistant response has been appended
+        if self.thinking_bridge:
+            self.thinking_bridge.cleanup_system_pollution()
+        
         # Check if the user has started speaking (barge-in interruption)
         if frame.__class__.__name__ == "UserStartedSpeakingFrame":
             if self.thinking_bridge and hasattr(self.thinking_bridge, "_active_analysis_task"):
@@ -620,10 +631,23 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         ]
 
     context = LLMContext(messages, tools=pipecat_tools)
-    context_aggregator = LLMContextAggregatorPair(context)
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        assistant_params=LLMAssistantAggregatorParams(
+            enable_auto_context_summarization=True,
+            auto_context_summarization_config=LLMAutoContextSummarizationConfig(
+                max_unsummarized_messages=30,
+                summary_config=LLMContextSummaryConfig(
+                    min_messages_after_summary=20,
+                ),
+            ),
+        ),
+    )
 
     async def on_user_idle(processor: UserIdleProcessor):
         logger.info("User is idle. Prompting bot to speak.")
+        if thinking_bridge:
+            thinking_bridge.cleanup_system_pollution()
         messages.append({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
         await task.queue_frames([LLMRunFrame()])
 

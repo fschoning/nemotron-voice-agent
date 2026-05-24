@@ -13,6 +13,7 @@ class ThinkingBridge:
         self.context = None
         self.pipeline_task = None
         self._active_analysis_task = None
+        self._is_summarizing = False
         
         # 1. Convert MCP tools to Gemini SDK Tool definitions
         self.mcp_call_callback = mcp_call_callback
@@ -99,6 +100,34 @@ If any of these are requested, output a polite refusal directing them to a relev
                     f.write(f"[{timestamp}] SYSTEM (Astrological Brain): {message}\n")
             threading.Thread(target=_write).start()
 
+    def cleanup_system_pollution(self):
+        """Removes any dynamically injected system messages that have already been responded to by the assistant."""
+        if not self.context or not hasattr(self.context, "messages") or not self.context.messages:
+            return
+            
+        messages = self.context.messages
+        new_messages = []
+        
+        # Keep the first message (initial system prompt)
+        if messages:
+            new_messages.append(messages[0])
+            
+        for i in range(1, len(messages)):
+            msg = messages[i]
+            if msg.get("role") == "system":
+                # Check if there is an assistant message later in the list
+                has_assistant_later = False
+                for j in range(i + 1, len(messages)):
+                    if messages[j].get("role") == "assistant":
+                        has_assistant_later = True
+                        break
+                if has_assistant_later:
+                    logger.info(f"🧹 Removing processed dynamic system instruction: '{msg.get('content')[:100]}...'")
+                    continue
+            new_messages.append(msg)
+            
+        self.context.messages = new_messages
+
     async def handle_request_analysis(self, params):
         """Called by the Pipecat Voice pipeline when Flash uses the request_analysis tool."""
         question = params.arguments.get("question", "")
@@ -125,6 +154,7 @@ If any of these are requested, output a polite refusal directing them to a relev
         """Background calculation task running the heavy Gemini Pro / MCP tools."""
         try:
             logger.info("🧠 Brain background calculation started...")
+            self.cleanup_system_pollution()
             self.log_transcript("Background deep-thinking worker started.")
             
             # 1. Run the Sanitiser model (via asyncio.to_thread to keep the main event loop completely free)
