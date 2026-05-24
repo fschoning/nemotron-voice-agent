@@ -396,12 +396,24 @@ async def call_mcp_tool(tool_name: str, args: dict):
 transport_params = {
     "daily": lambda: DailyParams(
         audio_in_enabled=True, audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(
+                stop_secs=VAD_STOP_SECS,
+                confidence=0.85,
+                min_volume=0.7
+            )
+        ),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True, audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(
+                stop_secs=VAD_STOP_SECS,
+                confidence=0.85,
+                min_volume=0.7
+            )
+        ),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     ),
 }
@@ -639,6 +651,13 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         context,
         user_params=LLMUserAggregatorParams(
             user_idle_timeout=6.0,
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    stop_secs=VAD_STOP_SECS,
+                    confidence=0.85,
+                    min_volume=0.7
+                )
+            ),
         ),
         assistant_params=LLMAssistantAggregatorParams(
             enable_auto_context_summarization=True,
@@ -740,7 +759,13 @@ async def join_room(room_url: str, runner_args: RunnerArguments, session_data: d
         room_url=room_url,
         audio_in_enabled=True,
         audio_out_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
+        vad_analyzer=SileroVADAnalyzer(
+            params=VADParams(
+                stop_secs=VAD_STOP_SECS,
+                confidence=0.85,
+                min_volume=0.7
+            )
+        ),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     )
     
