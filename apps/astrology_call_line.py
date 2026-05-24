@@ -309,8 +309,8 @@ async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, atte
 async def manage_mcp_connection():
     global mcp_session
     try:
-        # Set timeout=None to prevent SSE session from timing out during standby
-        async with sse_client(url=MCP_SERVER_URL, timeout=None) as streams:
+        # Set timeout=None and sse_read_timeout=None to prevent SSE session from timing out during standby or inactivity
+        async with sse_client(url=MCP_SERVER_URL, timeout=None, sse_read_timeout=None) as streams:
             async with ClientSession(streams[0], streams[1]) as session:
                 await session.initialize()
                 mcp_session = session
