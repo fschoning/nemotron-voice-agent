@@ -111,7 +111,9 @@ class MistralCloudTTSService(TTSService):
                 data = response.json()
                 voices = data.get("items", [])
                 if voices:
-                    pipelog.info(f"✅ Found {len(voices)} voices.")
+                    pipelog.info(f"✅ Found {len(voices)} voices:")
+                    for i, v in enumerate(voices):
+                        pipelog.info(f"   [{i+1:02d}] Name: {v.get('name')} | ID: {v.get('id')}")
                     # 1. Try exact ID match
                     for v in voices:
                         if v.get("id") == self._requested_voice:
