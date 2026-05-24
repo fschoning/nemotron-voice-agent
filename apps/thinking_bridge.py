@@ -2,7 +2,6 @@ import os
 import json
 import asyncio
 import google.generativeai as genai
-from google.generativeai.types import content_types
 from loguru import logger
 from apps.sanitiser import sanitise_question
 
@@ -173,13 +172,13 @@ If any of these are requested, output a polite refusal directing them to a relev
                         logger.error(f"❌ Error executing MCP tool {original_name}: {e}")
                         mcp_res = f"Error executing tool: {e}"
                     
-                    # Gemini expects the result as a dict
-                    tool_results.append(
-                        content_types.Part.from_function_response(
-                            name=sanitized_name,
-                            response={"result": mcp_res}
-                        )
-                    )
+                    # Gemini expects the result as a dict or coerced structure
+                    tool_results.append({
+                        "function_response": {
+                            "name": sanitized_name,
+                            "response": {"result": mcp_res}
+                        }
+                    })
                 
                 # Send the tool results back to the model (via asyncio.to_thread)
                 response = await asyncio.to_thread(
