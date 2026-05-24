@@ -126,7 +126,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                     continue
             new_messages.append(msg)
             
-        self.context.messages = new_messages
+        self.context.set_messages(new_messages)
 
     async def handle_request_analysis(self, params):
         """Called by the Pipecat Voice pipeline when Flash uses the request_analysis tool."""
