@@ -219,6 +219,10 @@ class MistralCloudTTSService(TTSService):
                 
         yield TTSStoppedFrame()
 
+    async def run_tts(self, text: str, *args, **kwargs) -> AsyncGenerator[Frame, None]:
+        async for frame in self._run_tts(text):
+            yield frame
+
 from pipecat.transports.daily.transport import DailyTransport, DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 
