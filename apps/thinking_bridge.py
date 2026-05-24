@@ -101,7 +101,7 @@ If any of these are requested, output a polite refusal directing them to a relev
             threading.Thread(target=_write).start()
 
     def cleanup_system_pollution(self):
-        """Removes any dynamically injected system messages that have already been responded to by the assistant."""
+        """Removes any dynamically injected system/user notification messages that have already been responded to."""
         if not self.context or not hasattr(self.context, "messages") or not self.context.messages:
             return
             
@@ -114,7 +114,17 @@ If any of these are requested, output a polite refusal directing them to a relev
             
         for i in range(1, len(messages)):
             msg = messages[i]
-            if msg.get("role") == "system":
+            role = msg.get("role")
+            content = msg.get("content", "")
+            
+            # Check if this is a dynamic system prompt or our unique user notification
+            is_target = False
+            if role == "system":
+                is_target = True
+            elif role == "user" and isinstance(content, str) and content.startswith("[System Notification:"):
+                is_target = True
+                
+            if is_target:
                 # Check if there is an assistant message later in the list
                 has_assistant_later = False
                 for j in range(i + 1, len(messages)):
@@ -122,8 +132,9 @@ If any of these are requested, output a polite refusal directing them to a relev
                         has_assistant_later = True
                         break
                 if has_assistant_later:
-                    logger.info(f"🧹 Removing processed dynamic system instruction: '{msg.get('content')[:100]}...'")
+                    logger.info(f"🧹 Removing processed dynamic context notification: '{content[:100]}...'")
                     continue
+                    
             new_messages.append(msg)
             
         self.context.set_messages(new_messages)
@@ -180,22 +191,29 @@ If any of these are requested, output a polite refusal directing them to a relev
                             m["content"] = f"BLOCKED: Astrological brain analysis aborted. Reason: {msg}"
                             break
                 
-                # Inject the block message and trigger LLM turn
-                if self.context:
-                    self.context.messages.append({
-                        "role": "system",
+                if self.pipeline_task:
+                    from pipecat.frames.frames import InterruptionFrame, LLMMessagesAppendFrame
+                    
+                    # 1. Queue InterruptionFrame downstream to cut off any active filler/waffling speech
+                    await self.pipeline_task.queue_frames([InterruptionFrame()])
+                    logger.info("⚡ Programmatic interruption triggered to stop waffling (blocked path).")
+                    
+                    # 2. Construct the safe user-role notification
+                    notification = {
+                        "role": "user",
                         "content": (
-                            f"The client's question was flagged as prohibited. You must politely refuse "
+                            f"[System Notification: The client's question was flagged as prohibited. You must politely refuse "
                             f"to answer the question and direct them appropriately. Use this exact reasoning: "
                             f"'{msg}'. Speak warmly and professionally in your unique character. "
                             f"IMPORTANT: The background astrological calculations have been fully ABORTED and will NOT return any findings. "
                             f"Once you refuse the question, this turn is completely finished. Do NOT promise "
-                            f"to share any further birth chart findings, do NOT ask them to wait, and do NOT waffle."
+                            f"to share any further birth chart findings, do NOT ask them to wait, and do NOT waffle.]"
                         )
-                    })
-                if self.pipeline_task:
-                    from pipecat.frames.frames import LLMRunFrame
-                    await self.pipeline_task.queue_frames([LLMRunFrame()])
+                    }
+                    
+                    # 3. Queue LLMMessagesAppendFrame to atomically inject the message and trigger response turn
+                    await self.pipeline_task.queue_frames([LLMMessagesAppendFrame([notification], run_llm=True)])
+                    logger.info("📡 Successfully queued LLMMessagesAppendFrame downstream (blocked path).")
                 return
 
             logger.info(f"🤔 Sanitised query passing to Pro: {sanitised}")
@@ -259,24 +277,26 @@ If any of these are requested, output a polite refusal directing them to a relev
                         m["content"] = f"Calculations completed successfully. Astrological findings: {final_text}"
                         break
             
-            # 3. Inject the result into the front-end LLM context messages history
-            if self.context:
-                self.context.messages.append({
-                    "role": "system",
-                    "content": (
-                        f"The deep astrological calculation has finished. Here is the raw data and findings: "
-                        f"'{final_text}'. You must now translate and explain these findings to the client in "
-                        f"detail in your unique character/personality! Speak warm and engagingly. Do not read raw data dryly."
-                    )
-                })
-                logger.info("📝 Successfully injected brain findings into front-end LLM context.")
-                self.log_transcript("📝 Successfully injected brain findings into front-end LLM context and queued next generation turn.")
-            
-            # 4. Trigger a new LLM generation turn on the front-end model to deliver the text in character
             if self.pipeline_task:
-                from pipecat.frames.frames import LLMRunFrame
-                await self.pipeline_task.queue_frames([LLMRunFrame()])
-                logger.info("📡 Successfully queued LLMRunFrame downstream.")
+                from pipecat.frames.frames import InterruptionFrame, LLMMessagesAppendFrame
+                
+                # 1. Queue InterruptionFrame downstream to cut off any active filler/waffling speech
+                await self.pipeline_task.queue_frames([InterruptionFrame()])
+                logger.info("⚡ Programmatic interruption triggered to stop waffling (success path).")
+                
+                # 2. Construct the safe user-role notification
+                notification = {
+                    "role": "user",
+                    "content": (
+                        f"[System Notification: The deep astrological calculation has finished. Here is the raw data and findings: "
+                        f"'{final_text}'. You must now translate and explain these findings to the client in "
+                        f"detail in your unique character/personality! Speak warm and engagingly. Do not read raw data dryly.]"
+                    )
+                }
+                
+                # 3. Queue LLMMessagesAppendFrame to atomically inject the message and trigger response turn
+                await self.pipeline_task.queue_frames([LLMMessagesAppendFrame([notification], run_llm=True)])
+                logger.info("📡 Successfully queued LLMMessagesAppendFrame downstream (success path).")
                 
         except asyncio.CancelledError:
             logger.warning("⚠️ Background analysis task was cancelled due to user speech/interruption.")
@@ -292,18 +312,26 @@ If any of these are requested, output a polite refusal directing them to a relev
                         m["content"] = f"ERROR: The background astrological calculations failed: {e}"
                         break
             
-            if self.context:
-                self.context.messages.append({
-                    "role": "system",
-                    "content": (
-                        "The deep astrological calculations encountered a brief planetary alignment issue (timeout) and have been ABORTED. "
-                        "Please politely apologize to the client, mention a temporary chart eclipse, and ask them a warm follow-up or a new question. "
-                        "IMPORTANT: Do NOT tell them to wait, do NOT promise any further findings since the calculation has stopped, and do NOT waffle."
-                    )
-                })
             if self.pipeline_task:
-                from pipecat.frames.frames import LLMRunFrame
-                await self.pipeline_task.queue_frames([LLMRunFrame()])
+                from pipecat.frames.frames import InterruptionFrame, LLMMessagesAppendFrame
+                
+                # 1. Queue InterruptionFrame downstream to cut off any active filler/waffling speech
+                await self.pipeline_task.queue_frames([InterruptionFrame()])
+                logger.info("⚡ Programmatic interruption triggered to stop waffling (exception path).")
+                
+                # 2. Construct the safe user-role notification
+                notification = {
+                    "role": "user",
+                    "content": (
+                        "[System Notification: The deep astrological calculations encountered a brief planetary alignment issue (timeout) and have been ABORTED. "
+                        "Please politely apologize to the client, mention a temporary chart eclipse, and ask them a warm follow-up or a new question. "
+                        "IMPORTANT: Do NOT tell them to wait, do NOT promise any further findings since the calculation has stopped, and do NOT waffle.]"
+                    )
+                }
+                
+                # 3. Queue LLMMessagesAppendFrame to atomically inject the message and trigger response turn
+                await self.pipeline_task.queue_frames([LLMMessagesAppendFrame([notification], run_llm=True)])
+                logger.info("📡 Successfully queued LLMMessagesAppendFrame downstream (exception path).")
 
     def _get_function_calls(self, resp):
         calls = []

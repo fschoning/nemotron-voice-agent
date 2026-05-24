@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import wave
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
 from dotenv import load_dotenv
@@ -25,7 +25,15 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import Frame, InputAudioRawFrame, LLMRunFrame, StartFrame
+from pipecat.frames.frames import (
+    Frame, 
+    InputAudioRawFrame, 
+    LLMRunFrame, 
+    StartFrame,
+    LLMMessagesAppendFrame,
+    LLMSummarizeContextFrame,
+    InterruptionFrame
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -312,10 +320,14 @@ async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, atte
     async with httpx.AsyncClient() as client:
         try:
             url_trans = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/transcript"
-            await client.post(url_trans, json=transcript, timeout=10.0)
+            res = await client.post(url_trans, json=transcript, timeout=10.0)
+            res.raise_for_status()
             logger.info("✅ Saved transcript to CRM")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"❌ Failed to post transcript (HTTP Status {e.response.status_code}): {e.response.text}")
         except Exception as e:
-            logger.error(f"❌ Failed to post transcript: {e}")
+            import traceback
+            logger.error(f"❌ Failed to post transcript: {e}\n{traceback.format_exc()}")
 
 # --- Isolated MCP Event Loop ---
 async def manage_mcp_connection():
@@ -449,9 +461,13 @@ class TokenUsageMonitor(FrameProcessor):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
         
-        # Clean up dynamic system messages if any assistant response has been appended
-        if self.thinking_bridge:
-            self.thinking_bridge.cleanup_system_pollution()
+        # Precise Turn-Boundary Cleanup & On-Demand Summarization
+        if isinstance(frame, TTSStoppedFrame):
+            if self.thinking_bridge:
+                self.thinking_bridge.cleanup_system_pollution()
+                if len(self.thinking_bridge.context.messages) > 30:
+                    logger.info("📦 Clean history length exceeds threshold. Pushing on-demand context summarization...")
+                    await self.push_frame(LLMSummarizeContextFrame(), direction)
         
         # Check if the user has started speaking (barge-in interruption)
         if frame.__class__.__name__ == "UserStartedSpeakingFrame":
@@ -466,9 +482,10 @@ class TokenUsageMonitor(FrameProcessor):
                 class_name = m.__class__.__name__
                 
                 if "LLM" in class_name and "Usage" in class_name:
-                    prompt = getattr(m, "prompt_tokens", 0) or getattr(m, "prompt", 0) or getattr(m, "input_tokens", 0) or 0
-                    completion = getattr(m, "completion_tokens", 0) or getattr(m, "completion", 0) or getattr(m, "output_tokens", 0) or 0
-                    total = getattr(m, "total_tokens", 0) or getattr(m, "total", 0) or (prompt + completion)
+                    val = getattr(m, "value", None) or m
+                    prompt = getattr(val, "prompt_tokens", 0) or getattr(val, "prompt", 0) or getattr(val, "input_tokens", 0) or 0
+                    completion = getattr(val, "completion_tokens", 0) or getattr(val, "completion", 0) or getattr(val, "output_tokens", 0) or 0
+                    total = getattr(val, "total_tokens", 0) or getattr(val, "total", 0) or (prompt + completion)
                     
                     self.cumulative_prompt_tokens += prompt
                     self.cumulative_completion_tokens += completion
@@ -649,7 +666,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
             )
         ),
         assistant_params=LLMAssistantAggregatorParams(
-            enable_auto_context_summarization=True,
+            enable_auto_context_summarization=False,
             auto_context_summarization_config=LLMAutoContextSummarizationConfig(
                 max_unsummarized_messages=30,
                 summary_config=LLMContextSummaryConfig(
@@ -695,6 +712,80 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     # Bind the context and task to thinking_bridge to support Option 2 async trigger
     thinking_bridge.set_pipeline_context(context, task)
 
+    async def session_timer_task(task_ref: PipelineTask, scheduled_end_str: str):
+        from datetime import datetime, timezone
+        from pipecat.frames.frames import InterruptionFrame, LLMMessagesAppendFrame
+        
+        logger.info(f"⏱️ Session timer task started for scheduledEnd: {scheduled_end_str}")
+        try:
+            # Parse the ISO-8601 offset datetime string
+            end_dt = datetime.fromisoformat(scheduled_end_str.replace("Z", "+00:00"))
+            
+            # Calculate initial remaining seconds
+            now = datetime.now(timezone.utc)
+            remaining = (end_dt - now).total_seconds()
+            
+            if remaining <= 0:
+                logger.warning("⏱️ Warning: The scheduled consultation end time is already in the past!")
+                return
+                
+            logger.info(f"⏱️ Total session time remaining: {remaining:.1f} seconds")
+            
+            # 1. Wait until 2 minutes (120 seconds) remaining
+            if remaining > 120:
+                warn_delay = remaining - 120
+                logger.info(f"⏱️ Scheduling 2-minute wrap-up warning in {warn_delay:.1f} seconds.")
+                await asyncio.sleep(warn_delay)
+                
+                # Re-calculate remaining to be sure
+                now = datetime.now(timezone.utc)
+                remaining = (end_dt - now).total_seconds()
+                
+                if remaining > 0:
+                    logger.info("⏱️ Triggering 2-minute wrap-up warning...")
+                    # Interrupt the bot if it's currently speaking
+                    await task_ref.queue_frames([InterruptionFrame()])
+                    
+                    # Append wrap-up instruction and run LLM turn
+                    message = {
+                        "role": "user",
+                        "content": (
+                            "[System Notification: There are exactly 2 minutes remaining in this scheduled consultation. "
+                            "Please politely and warmly notify the client of the remaining time, and begin wrapping up your final thoughts "
+                            "and insights on their chart. Do not start any new deep-thinking calculations.]"
+                        )
+                    }
+                    await task_ref.queue_frames([LLMMessagesAppendFrame([message], run_llm=True)])
+                    
+            # 2. Wait until hard end (0 seconds remaining)
+            # Recalculate remaining seconds
+            now = datetime.now(timezone.utc)
+            remaining = (end_dt - now).total_seconds()
+            
+            if remaining > 0:
+                logger.info(f"⏱️ Scheduling hard-end goodbye in {remaining:.1f} seconds.")
+                await asyncio.sleep(remaining)
+                
+                logger.info("⏱️ Triggering hard-end goodbye and disconnect...")
+                # Interrupt the bot if it's currently speaking
+                await task_ref.queue_frames([InterruptionFrame()])
+                
+                # Append final goodbye instruction and run LLM turn
+                message = {
+                    "role": "user",
+                    "content": (
+                        "[System Notification: The scheduled consultation period has fully completed. "
+                        "You must now warmly and politely say goodbye to the client, thank them for their time, "
+                        "and immediately invoke the 'end_call' tool to close the session. Do not waffle.]"
+                    )
+                }
+                await task_ref.queue_frames([LLMMessagesAppendFrame([message], run_llm=True)])
+                
+        except asyncio.CancelledError:
+            logger.info("⏱️ Session timer task was cancelled.")
+        except Exception as e:
+            logger.error(f"❌ Error in session timer task: {e}")
+
     # Track if the bot has greeted the user yet
     has_greeted = False
 
@@ -703,8 +794,15 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         logger.info("User is idle. Prompting bot to speak.")
         if thinking_bridge:
             thinking_bridge.cleanup_system_pollution()
-        context.add_message({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
-        await task.queue_frames([LLMRunFrame()])
+            if thinking_bridge._active_analysis_task and not thinking_bridge._active_analysis_task.done():
+                logger.info("⏳ Astrological brain is actively calculating in the background. Suppressing idle prompt.")
+                return
+
+        message = {
+            "role": "user",
+            "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"
+        }
+        await task.queue_frames([LLMMessagesAppendFrame([message], run_llm=True)])
 
     @task.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
@@ -717,6 +815,8 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
             await task.queue_frames([LLMRunFrame()])
             if not is_primed:
                 asyncio.create_task(delayed_abort())
+            elif session_data.get("scheduledEnd"):
+                asyncio.create_task(session_timer_task(task, session_data["scheduledEnd"]))
 
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
@@ -728,6 +828,8 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
             await task.queue_frames([LLMRunFrame()])
             if not is_primed:
                 asyncio.create_task(delayed_abort())
+            elif session_data.get("scheduledEnd"):
+                asyncio.create_task(session_timer_task(task, session_data["scheduledEnd"]))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
