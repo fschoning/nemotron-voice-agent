@@ -32,7 +32,7 @@ class ThinkingBridge:
 
         # 2. Build system instruction with guardrails and session context
         system_instruction = """
-You are the Deep Thinking Vedic Astrology Brain (Gemini 3.1 Pro Preview).
+You are the Deep Thinking Vedic Astrology Brain (Gemini Pro Latest).
 You have access to Jyotish MCP tools. Use them to calculate Native Charts, Dashas, Transits, and Compatibility.
 
 ## GUARDRAILS - PROHIBITED TOPICS (LAYER 3)
@@ -72,7 +72,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                 history.append({"role": "model", "parts": ["Acknowledged. I have the pre-call analysis in my context."]})
 
         self.thinking_model = genai.GenerativeModel(
-            model_name='gemini-3.1-pro-preview',
+            model_name='gemini-pro-latest',
             system_instruction=system_instruction,
             tools=self.gemini_tools if self.gemini_tools else None
         )
@@ -94,8 +94,8 @@ If any of these are requested, output a polite refusal directing them to a relev
         logger.info(f"🤔 Sanitised query passing to Pro: {sanitised}")
         
         try:
-            # Send to 3.1 Pro. We manually process tool calls since we have async external MCP tools
-            response = self.chat.send_message(sanitised, tools=self.gemini_tools)
+            # Send to Pro. We manually process tool calls since we have async external MCP tools
+            response = self.chat.send_message(sanitised, tools=self.gemini_tools, request_options={"timeout": 600.0})
             
             # Process potential tool calls in a loop until we get text
             while self._get_function_calls(response):
@@ -106,7 +106,14 @@ If any of these are requested, output a polite refusal directing them to a relev
                     args = dict(fc.args)
                     
                     logger.info(f"🧠 Pro called tool: {original_name} with {args}")
-                    mcp_res = await self.mcp_call_callback(original_name, args)
+                    try:
+                        mcp_res = await asyncio.wait_for(
+                            self.mcp_call_callback(original_name, args),
+                            timeout=300.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(f"❌ MCP Tool {original_name} timed out after 300 seconds.")
+                        mcp_res = "Error: Tool execution timed out after 300 seconds."
                     
                     # Gemini expects the result as a dict
                     tool_results.append(
@@ -117,7 +124,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                     )
                 
                 # Send the tool results back to the model
-                response = self.chat.send_message(tool_results)
+                response = self.chat.send_message(tool_results, request_options={"timeout": 600.0})
 
             final_text = response.text
             logger.info(f"🧠 Pro answered: {final_text}")
