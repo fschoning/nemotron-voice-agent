@@ -34,6 +34,7 @@ class JoinRoomRequest(BaseModel):
     apptUid: str
     tenant: str
     sessionData: dict
+    token: str = None
 
 def _on_bot_task_done(task):
     """Callback fired when the bot asyncio.Task finishes (normally or via exception).
@@ -66,7 +67,7 @@ async def join_room(req: JoinRoomRequest):
     
     runner_args = RunnerArguments()
     active_bot_task = asyncio.create_task(
-        bot(runner_args, req.roomUrl, req.sessionData, req.tenant, req.apptUid)
+        bot(runner_args, req.roomUrl, req.sessionData, req.tenant, req.apptUid, req.token)
     )
     active_bot_task.add_done_callback(_on_bot_task_done)
     

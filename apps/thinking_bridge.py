@@ -10,6 +10,11 @@ class ThinkingBridge:
     def __init__(self, mcp_tools_cache, mcp_call_callback, session_data=None):
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         
+        # Initialize context and active task references for Option 2 async execution
+        self.context = None
+        self.pipeline_task = None
+        self._active_analysis_task = None
+        
         # 1. Convert MCP tools to Gemini SDK Tool definitions
         self.mcp_call_callback = mcp_call_callback
         self.gemini_tools = []
@@ -78,6 +83,12 @@ If any of these are requested, output a polite refusal directing them to a relev
         )
         self.chat = self.thinking_model.start_chat(history=history)
 
+    def set_pipeline_context(self, context, pipeline_task):
+        """Saves references to the LLMContext and PipelineTask for out-of-band updates."""
+        self.context = context
+        self.pipeline_task = pipeline_task
+        logger.info("📡 ThinkingBridge: Bound pipeline context and task references successfully.")
+
     async def handle_request_analysis(self, params):
         """Called by the Pipecat Voice pipeline when Flash uses the request_analysis tool."""
         question = params.arguments.get("question", "")
@@ -93,8 +104,26 @@ If any of these are requested, output a polite refusal directing them to a relev
 
         logger.info(f"🤔 Sanitised query passing to Pro: {sanitised}")
         
+        # Start the background deep-thinking calculation coroutine (non-blocking)
+        self._active_analysis_task = asyncio.create_task(
+            self._run_background_pro_analysis(sanitised)
+        )
+        
+        # Return immediately to the front-end LLM.
+        # This prompts the front-end LLM to formulate an immediate, in-character filler phrase,
+        # and gracefully finish its turn.
+        await params.result_callback({
+            "result": (
+                "Deep analysis initiated in the background. Please warmly explain to the client that "
+                "you are consulting the deep alignments and birth charts, and that you will share the "
+                "findings in just a moment. Once you explain this, immediately finish your turn."
+            )
+        })
+
+    async def _run_background_pro_analysis(self, sanitised):
+        """Background calculation task running the heavy Gemini Pro / MCP tools."""
         try:
-            # Send to Pro. We manually process tool calls since we have async external MCP tools
+            logger.info("🧠 Brain background calculation started...")
             response = self.chat.send_message(sanitised, tools=self.gemini_tools, request_options={"timeout": 600.0})
             
             # Process potential tool calls in a loop until we get text
@@ -105,7 +134,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                     original_name = self.tool_name_map.get(sanitized_name, sanitized_name)
                     args = dict(fc.args)
                     
-                    logger.info(f"🧠 Pro called tool: {original_name} with {args}")
+                    logger.info(f"🧠 Pro called tool in background: {original_name} with {args}")
                     try:
                         mcp_res = await asyncio.wait_for(
                             self.mcp_call_callback(original_name, args),
@@ -127,12 +156,41 @@ If any of these are requested, output a polite refusal directing them to a relev
                 response = self.chat.send_message(tool_results, request_options={"timeout": 600.0})
 
             final_text = response.text
-            logger.info(f"🧠 Pro answered: {final_text}")
-            await params.result_callback({"result": final_text})
+            logger.info(f"🧠 Pro answered in background: {final_text}")
             
+            # 1. Inject the result into the front-end LLM context messages history
+            if self.context:
+                self.context.messages.append({
+                    "role": "system",
+                    "content": (
+                        f"The deep astrological calculation has finished. Here is the raw data and findings: "
+                        f"'{final_text}'. You must now translate and explain these findings to the client in "
+                        f"detail in your unique character/personality! Speak warm and engagingly. Do not read raw data dryly."
+                    )
+                })
+                logger.info("📝 Successfully injected brain findings into front-end LLM context.")
+            
+            # 2. Trigger a new LLM generation turn on the front-end model to deliver the text in character
+            if self.pipeline_task:
+                from pipecat.frames.frames import LLMRunFrame
+                await self.pipeline_task.queue_frames([LLMRunFrame()])
+                logger.info("📡 Successfully queued LLMRunFrame downstream.")
+                
+        except asyncio.CancelledError:
+            logger.warning("⚠️ Background analysis task was cancelled due to user speech/interruption.")
         except Exception as e:
-            logger.error(f"❌ Error in Thinking Bridge: {e}")
-            await params.result_callback({"result": "I'm having trouble connecting to my deeper knowledge base right now. Let's stick to what we know for a moment."})
+            logger.error(f"❌ Error in background Pro analysis: {e}")
+            if self.context:
+                self.context.messages.append({
+                    "role": "system",
+                    "content": (
+                        "The deep astrological calculations encountered a brief planetary alignment issue (timeout). "
+                        "Please politely apologize to the client, mention a temporary chart eclipse, and ask them a warm follow-up."
+                    )
+                })
+            if self.pipeline_task:
+                from pipecat.frames.frames import LLMRunFrame
+                await self.pipeline_task.queue_frames([LLMRunFrame()])
 
     def _get_function_calls(self, resp):
         calls = []

@@ -396,8 +396,9 @@ transport_params = {
 }
 
 class TokenUsageMonitor(FrameProcessor):
-    def __init__(self):
+    def __init__(self, thinking_bridge=None):
         super().__init__()
+        self.thinking_bridge = thinking_bridge
         self.cumulative_prompt_tokens = 0
         self.cumulative_completion_tokens = 0
         self.cumulative_total_tokens = 0
@@ -405,6 +406,14 @@ class TokenUsageMonitor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
+        
+        # Check if the user has started speaking (barge-in interruption)
+        if frame.__class__.__name__ == "UserStartedSpeakingFrame":
+            if self.thinking_bridge and hasattr(self.thinking_bridge, "_active_analysis_task"):
+                task = self.thinking_bridge._active_analysis_task
+                if task and not task.done():
+                    logger.warning("🎙️ User interruption detected. Cancelling background deep-thinking task!")
+                    task.cancel()
         
         if isinstance(frame, MetricsFrame):
             for m in frame.data:
@@ -609,7 +618,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
-    token_monitor = TokenUsageMonitor()
+    token_monitor = TokenUsageMonitor(thinking_bridge)
 
     pipeline_processors = [
         transport.input(), rtvi, stt, context_aggregator.user(), user_idle, llm,
@@ -624,6 +633,9 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         pipeline, params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         observers=[RTVIObserver(rtvi)], idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
+
+    # Bind the context and task to thinking_bridge to support Option 2 async trigger
+    thinking_bridge.set_pipeline_context(context, task)
 
     # Track if the bot has greeted the user yet
     has_greeted = False
@@ -660,7 +672,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)
 
-async def join_room(room_url: str, runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
+async def join_room(room_url: str, runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None, token: str = None):
     """Joins an existing Daily.co room. Does NOT create or delete the room."""
     logger.info(f"\n\n{'='*50}")
     logger.info(f"🚀 VEDIC PATHWAY ASTROLOGER IS LIVE!")
@@ -675,7 +687,13 @@ async def join_room(room_url: str, runner_args: RunnerArguments, session_data: d
         vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
         turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams()),
     )
-    transport = DailyTransport(room_url, None, "Vedic Pathway Astrologer", params)
+    
+    # Resolve the astrologer's display name dynamically
+    bot_name = "Vedic Pathway Astrologer"
+    if session_data and session_data.get("agentPersonality"):
+        bot_name = session_data.get("agentPersonality")
+        
+    transport = DailyTransport(room_url, token, bot_name, params)
 
     # 3. Running the pipeline
     try:
@@ -685,7 +703,7 @@ async def join_room(room_url: str, runner_args: RunnerArguments, session_data: d
     finally:
         logger.info("Left Daily room. Peace out. ✌️")
 
-async def bot(runner_args: RunnerArguments, room_url: str, session_data: dict = None, tenant: str = None, appt_uid: str = None):
+async def bot(runner_args: RunnerArguments, room_url: str, session_data: dict = None, tenant: str = None, appt_uid: str = None, token: str = None):
     # Idiomatic Pipecat Init: Dependencies first, Transport second, Task third.
     global tool_call_queue, mcp_session
     tool_call_queue = asyncio.Queue()
@@ -700,7 +718,7 @@ async def bot(runner_args: RunnerArguments, room_url: str, session_data: dict = 
         return
 
     try:
-        await join_room(room_url, runner_args, session_data, tenant, appt_uid)
+        await join_room(room_url, runner_args, session_data, tenant, appt_uid, token)
     finally:
         mcp_task.cancel()
 
