@@ -41,7 +41,6 @@ from pipecat.utils.context.llm_context_summarization import (
 )
 from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
-from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.processors.user_idle_processor import UserIdleProcessor
@@ -667,13 +666,11 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     thinking_bridge.transcript_file = transcript_file
     llm.register_function("request_analysis", thinking_bridge.handle_request_analysis)
 
-    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
     token_monitor = TokenUsageMonitor(thinking_bridge)
     transcript_logger = TranscriptLogger(transcript_file)
 
     pipeline_processors = [
-        transport.input(), rtvi, stt, context_aggregator.user(), user_idle, llm,
+        transport.input(), stt, context_aggregator.user(), user_idle, llm,
         token_monitor,
         SentenceAggregator(), transcript_logger, tts, v2v_metrics, transport.output(),
     ]
@@ -683,7 +680,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     pipeline = Pipeline(pipeline_processors)
     task = PipelineTask(
         pipeline, params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[RTVIObserver(rtvi)], idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
+        idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
     # Bind the context and task to thinking_bridge to support Option 2 async trigger
@@ -692,7 +689,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     # Track if the bot has greeted the user yet
     has_greeted = False
 
-    @rtvi.event_handler("on_client_ready")
+    @task.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         nonlocal has_greeted
         logger.info("RTVI client ready")
