@@ -36,8 +36,23 @@ else
 fi
 
 # Upgrade dependencies automatically to ensure modern context summarization is supported
-echo "📦 Checking and upgrading required Pipecat dependencies..."
-python3 -m pip install --upgrade "pipecat-ai[cartesia,daily,google,local-smart-turn-v3,openai,runner,silero,webrtc]"
+# Handles virtual environments created without pip by falling back to system pip/pip3 (which respects the active venv)
+if python3 -m pip --version &>/dev/null; then
+    PIP_CMD="python3 -m pip"
+elif command -v pip3 &>/dev/null; then
+    PIP_CMD="pip3"
+elif command -v pip &>/dev/null; then
+    PIP_CMD="pip"
+else
+    PIP_CMD=""
+fi
+
+if [ -n "$PIP_CMD" ]; then
+    echo "📦 Checking and upgrading required Pipecat dependencies using $PIP_CMD..."
+    $PIP_CMD install --upgrade "pipecat-ai[cartesia,daily,google,local-smart-turn-v3,openai,runner,silero,webrtc]"
+else
+    echo "⚠️ Warning: pip command not found. Skipping dependency check."
+fi
 
 echo "🚀 Starting Vedic Astrology Call Line (Webhook Mode on Port 8090)..."
 echo "Log file: $LOG_FILE"
