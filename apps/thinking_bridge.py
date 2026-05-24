@@ -98,9 +98,9 @@ If any of these are requested, output a polite refusal directing them to a relev
             response = self.chat.send_message(sanitised, tools=self.gemini_tools)
             
             # Process potential tool calls in a loop until we get text
-            while response.function_calls:
+            while self._get_function_calls(response):
                 tool_results = []
-                for fc in response.function_calls:
+                for fc in self._get_function_calls(response):
                     sanitized_name = fc.name
                     original_name = self.tool_name_map.get(sanitized_name, sanitized_name)
                     args = dict(fc.args)
@@ -126,6 +126,19 @@ If any of these are requested, output a polite refusal directing them to a relev
         except Exception as e:
             logger.error(f"❌ Error in Thinking Bridge: {e}")
             await params.result_callback({"result": "I'm having trouble connecting to my deeper knowledge base right now. Let's stick to what we know for a moment."})
+
+    def _get_function_calls(self, resp):
+        calls = []
+        if not resp or not resp.candidates:
+            return calls
+        for candidate in resp.candidates:
+            if not candidate.content or not candidate.content.parts:
+                continue
+            for part in candidate.content.parts:
+                fc = getattr(part, 'function_call', None)
+                if fc and fc.name:
+                    calls.append(fc)
+        return calls
 
     def _get_block_rejection_message(self, category: str) -> str:
         messages = {
