@@ -331,3 +331,14 @@ If any of these are requested, output a polite refusal directing them to a relev
         }
         clean_cat = category.strip()
         return messages.get(clean_cat.upper(), clean_cat)
+
+    async def handle_end_call(self, params):
+        """Called by the Pipecat Voice pipeline when Flash uses the end_call tool."""
+        logger.info("📞 Tool call: end_call triggered. Terminating call...")
+        self.log_transcript("Bot initiated call termination (end_call).")
+        await params.result_callback({"result": "Call termination initiated."})
+        
+        if self.pipeline_task:
+            from pipecat.frames.frames import EndFrame
+            # Queue EndFrame to cleanly finish any speaking/playback before hanging up
+            await self.pipeline_task.queue_frames([EndFrame()])

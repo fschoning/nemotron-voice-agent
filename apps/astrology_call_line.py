@@ -506,6 +506,12 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
                 }
             },
             required=["question"]
+        ),
+        FunctionSchema(
+            name="end_call",
+            description="Hang up or terminate the telephone call. Use this when the user explicitly says goodbye, wants to end the call, or the consultation is complete.",
+            properties={},
+            required=[]
         )
     ])
 
@@ -667,6 +673,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     thinking_bridge = ThinkingBridge(mcp_tools_cache, call_mcp_tool, session_data)
     thinking_bridge.transcript_file = transcript_file
     llm.register_function("request_analysis", thinking_bridge.handle_request_analysis)
+    llm.register_function("end_call", thinking_bridge.handle_end_call)
 
     token_monitor = TokenUsageMonitor(thinking_bridge)
     transcript_logger = TranscriptLogger(transcript_file)
