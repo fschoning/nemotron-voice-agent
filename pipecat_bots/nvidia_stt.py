@@ -185,21 +185,16 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
 
         # Handle UserStoppedSpeakingFrame - hold it and send hard reset
         if isinstance(frame, UserStoppedSpeakingFrame):
-            if self._waiting_for_final:
-                # Hold this frame until final transcript arrives from hard reset
-                self._pending_user_stopped_frame = frame
-                self._pending_frame_direction = direction
-                self._start_pending_frame_timeout()
-                logger.debug(f"{self} holding UserStoppedSpeakingFrame at {time.time():.3f}")
-                # Start STT metric timer here (not at VAD) to measure just finalization time
-                self._vad_stopped_time = time.time()
-                # Send HARD reset to capture trailing words like "and" in "speaker and"
-                # Hard reset uses padding + keep_all_outputs=True, then resets decoder
-                await self._send_reset(finalize=True)
-                return  # Don't pass through yet
-            # If not waiting for final, pass through normally
-            await super().process_frame(frame, direction)
-            return
+            # Always hold this frame until final transcript arrives from hard reset
+            self._pending_user_stopped_frame = frame
+            self._pending_frame_direction = direction
+            self._start_pending_frame_timeout()
+            logger.debug(f"{self} holding UserStoppedSpeakingFrame at {time.time():.3f}")
+            # Start STT metric timer here to measure finalization time
+            self._vad_stopped_time = time.time()
+            # Send HARD reset to capture trailing words and get the final transcript
+            await self._send_reset(finalize=True)
+            return  # Don't pass through yet
 
 
         # All other frames pass through normally
