@@ -403,6 +403,7 @@ class TokenUsageMonitor(FrameProcessor):
         self.cumulative_total_tokens = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
         
         if isinstance(frame, MetricsFrame):
