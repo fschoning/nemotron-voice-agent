@@ -136,11 +136,12 @@ If any of these are requested, output a polite refusal directing them to a relev
             
             self.log_transcript(f"Sanitiser output: '{sanitised}'")
             
-            if sanitised.startswith("BLOCKED:"):
+            sanitised_upper = sanitised.upper().strip()
+            if sanitised_upper.startswith("BLOCKED:") or sanitised_upper.startswith("REJECT:"):
                 logger.warning(f"🚫 Question blocked by sanitiser in background: {sanitised}")
-                rejection_reason = sanitised.split(":")[1]
+                rejection_reason = sanitised.split(":", 1)[1]
                 msg = self._get_block_rejection_message(rejection_reason)
-                self.log_transcript(f"🚫 Guardrail block triggered: Rejection category: {rejection_reason}")
+                self.log_transcript(f"🚫 Guardrail block triggered: Rejection reason: {rejection_reason.strip()}")
                 
                 # Inject the block message and trigger LLM turn
                 if self.context:
@@ -276,4 +277,5 @@ If any of these are requested, output a polite refusal directing them to a relev
             "FINANCIAL": "For financial decisions, please consult a certified financial advisor.",
             "FERTILITY": "For fertility concerns, please consult a reproductive health specialist."
         }
-        return messages.get(category, "I cannot address this topic in the consultation.")
+        clean_cat = category.strip()
+        return messages.get(clean_cat.upper(), clean_cat)
