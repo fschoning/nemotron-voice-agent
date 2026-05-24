@@ -149,7 +149,10 @@ If any of these are requested, output a polite refusal directing them to a relev
                         "content": (
                             f"The client's question was flagged as prohibited. You must politely refuse "
                             f"to answer the question and direct them appropriately. Use this exact reasoning: "
-                            f"'{msg}'. Speak warmly and professionally in your unique character."
+                            f"'{msg}'. Speak warmly and professionally in your unique character. "
+                            f"IMPORTANT: The background astrological calculations have been fully ABORTED and will NOT return any findings. "
+                            f"Once you refuse the question, this turn is completely finished. Do NOT promise "
+                            f"to share any further birth chart findings, do NOT ask them to wait, and do NOT waffle."
                         )
                     })
                 if self.pipeline_task:
@@ -240,8 +243,9 @@ If any of these are requested, output a polite refusal directing them to a relev
                 self.context.messages.append({
                     "role": "system",
                     "content": (
-                        "The deep astrological calculations encountered a brief planetary alignment issue (timeout). "
-                        "Please politely apologize to the client, mention a temporary chart eclipse, and ask them a warm follow-up."
+                        "The deep astrological calculations encountered a brief planetary alignment issue (timeout) and have been ABORTED. "
+                        "Please politely apologize to the client, mention a temporary chart eclipse, and ask them a warm follow-up or a new question. "
+                        "IMPORTANT: Do NOT tell them to wait, do NOT promise any further findings since the calculation has stopped, and do NOT waffle."
                     )
                 })
             if self.pipeline_task:
