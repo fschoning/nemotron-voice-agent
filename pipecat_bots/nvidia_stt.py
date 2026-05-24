@@ -27,6 +27,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.metrics.metrics import TTFBMetricsData
@@ -174,8 +175,8 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
             frame: The frame to process.
             direction: The direction of frame processing.
         """
-        # Handle UserStartedSpeakingFrame - reset pending frame state
-        if isinstance(frame, UserStartedSpeakingFrame):
+        # Handle UserStartedSpeakingFrame and VADUserStartedSpeakingFrame - reset pending frame state
+        if isinstance(frame, (UserStartedSpeakingFrame, VADUserStartedSpeakingFrame)):
             await self._cancel_pending_frame_timeout()
             self._pending_user_stopped_frame = None
             self._waiting_for_final = False
@@ -200,13 +201,13 @@ class NVidiaWebSocketSTTService(WebsocketSTTService):
         # All other frames pass through normally
         await super().process_frame(frame, direction)
 
-        # Trigger SOFT reset on VAD silence detection.
-        # VAD fires after ~200ms of silence, so all speech audio has already
-        # been sent. Soft reset returns current text quickly without forcing
-        # decoder finalization (no keep_all_outputs=True), preserving decoder state.
+        # Trigger HARD reset on VAD silence detection to immediately finalize the ASR server transcript.
         if isinstance(frame, VADUserStoppedSpeakingFrame):
             self._waiting_for_final = True
-            await self._send_reset(finalize=False)  # Soft reset
+            # Start STT metric timer here to measure finalization time
+            self._vad_stopped_time = time.time()
+            logger.info(f"{self} raw VAD silence detected, triggering hard reset to finalize ASR server")
+            await self._send_reset(finalize=True)  # Send HARD reset immediately
 
     async def _send_reset(self, finalize: bool = True):
         """Send reset signal to trigger transcription.
