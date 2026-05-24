@@ -395,6 +395,39 @@ transport_params = {
     ),
 }
 
+class TranscriptLogger(FrameProcessor):
+    def __init__(self, filename: Path):
+        super().__init__()
+        self.filename = filename
+        self.filename.parent.mkdir(exist_ok=True, parents=True)
+        with open(self.filename, "w", encoding="utf-8") as f:
+            f.write(f"=== Vedic Pathway Consultation Transcript ===\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+
+        from pipecat.frames.frames import TranscriptionFrame, TextFrame
+        if isinstance(frame, TranscriptionFrame):
+            text = frame.text.strip()
+            if text:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                logger.info(f"📝 [Transcript] USER: {text}")
+                def _write():
+                    with open(self.filename, "a", encoding="utf-8") as f:
+                        f.write(f"[{timestamp}] USER: {text}\n")
+                await asyncio.to_thread(_write)
+                
+        elif isinstance(frame, TextFrame):
+            text = frame.text.strip()
+            if text:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                logger.info(f"📝 [Transcript] BOT: {text}")
+                def _write():
+                    with open(self.filename, "a", encoding="utf-8") as f:
+                        f.write(f"[{timestamp}] BOT: {text}\n")
+                await asyncio.to_thread(_write)
+
 class TokenUsageMonitor(FrameProcessor):
     def __init__(self, thinking_bridge=None):
         super().__init__()
@@ -613,17 +646,23 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
         run_in_parallel=False
     )
 
+    transcripts_dir = Path(__file__).parent.parent / "transcripts"
+    transcripts_dir.mkdir(exist_ok=True)
+    transcript_file = transcripts_dir / f"transcript_{appt_uid or 'session'}.txt"
+
     thinking_bridge = ThinkingBridge(mcp_tools_cache, call_mcp_tool, session_data)
+    thinking_bridge.transcript_file = transcript_file
     llm.register_function("request_analysis", thinking_bridge.handle_request_analysis)
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     token_monitor = TokenUsageMonitor(thinking_bridge)
+    transcript_logger = TranscriptLogger(transcript_file)
 
     pipeline_processors = [
         transport.input(), rtvi, stt, context_aggregator.user(), user_idle, llm,
         token_monitor,
-        SentenceAggregator(), tts, v2v_metrics, transport.output(),
+        SentenceAggregator(), transcript_logger, tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
     pipeline_processors.append(context_aggregator.assistant())

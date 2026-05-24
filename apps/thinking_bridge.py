@@ -88,10 +88,22 @@ If any of these are requested, output a polite refusal directing them to a relev
         self.pipeline_task = pipeline_task
         logger.info("📡 ThinkingBridge: Bound pipeline context and task references successfully.")
 
+    def log_transcript(self, message: str):
+        """Helper to write deep astrological thinking steps to the local session transcript file."""
+        if hasattr(self, "transcript_file") and self.transcript_file:
+            from datetime import datetime
+            import threading
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            def _write():
+                with open(self.transcript_file, "a", encoding="utf-8") as f:
+                    f.write(f"[{timestamp}] SYSTEM (Astrological Brain): {message}\n")
+            threading.Thread(target=_write).start()
+
     async def handle_request_analysis(self, params):
         """Called by the Pipecat Voice pipeline when Flash uses the request_analysis tool."""
         question = params.arguments.get("question", "")
         logger.info(f"🤔 Flash requested analysis: {question}")
+        self.log_transcript(f"Flash requested deep astrological analysis. Query: '{question}'")
         
         # Start the background deep-thinking calculation coroutine (non-blocking)
         self._active_analysis_task = asyncio.create_task(
@@ -113,6 +125,7 @@ If any of these are requested, output a polite refusal directing them to a relev
         """Background calculation task running the heavy Gemini Pro / MCP tools."""
         try:
             logger.info("🧠 Brain background calculation started...")
+            self.log_transcript("Background deep-thinking worker started.")
             
             # 1. Run the Sanitiser model (via asyncio.to_thread to keep the main event loop completely free)
             sanitised = await asyncio.to_thread(
@@ -121,10 +134,13 @@ If any of these are requested, output a polite refusal directing them to a relev
                 self.guardrail_prompt
             )
             
+            self.log_transcript(f"Sanitiser output: '{sanitised}'")
+            
             if sanitised.startswith("BLOCKED:"):
                 logger.warning(f"🚫 Question blocked by sanitiser in background: {sanitised}")
                 rejection_reason = sanitised.split(":")[1]
                 msg = self._get_block_rejection_message(rejection_reason)
+                self.log_transcript(f"🚫 Guardrail block triggered: Rejection category: {rejection_reason}")
                 
                 # Inject the block message and trigger LLM turn
                 if self.context:
@@ -160,17 +176,21 @@ If any of these are requested, output a polite refusal directing them to a relev
                     args = dict(fc.args)
                     
                     logger.info(f"🧠 Pro called tool in background: {original_name} with {args}")
+                    self.log_transcript(f"⚙️ Brain executing MCP tool: '{original_name}' with args {args}")
                     try:
                         mcp_res = await asyncio.wait_for(
                             self.mcp_call_callback(original_name, args),
                             timeout=300.0
                         )
+                        self.log_transcript(f"✅ MCP Tool '{original_name}' completed. Result: {mcp_res}")
                     except asyncio.TimeoutError:
                         logger.error(f"❌ MCP Tool {original_name} timed out after 300 seconds.")
                         mcp_res = "Error: Tool execution timed out after 300 seconds."
+                        self.log_transcript(f"❌ MCP Tool '{original_name}' timed out after 300 seconds.")
                     except Exception as e:
                         logger.error(f"❌ Error executing MCP tool {original_name}: {e}")
                         mcp_res = f"Error executing tool: {e}"
+                        self.log_transcript(f"❌ MCP Tool '{original_name}' failed with error: {e}")
                     
                     # Gemini expects the result as a dict or coerced structure
                     tool_results.append({
@@ -189,6 +209,7 @@ If any of these are requested, output a polite refusal directing them to a relev
 
             final_text = response.text
             logger.info(f"🧠 Pro answered in background: {final_text}")
+            self.log_transcript(f"🧠 Brain completed astrological calculations. Final findings: '{final_text}'")
             
             # 3. Inject the result into the front-end LLM context messages history
             if self.context:
@@ -201,6 +222,7 @@ If any of these are requested, output a polite refusal directing them to a relev
                     )
                 })
                 logger.info("📝 Successfully injected brain findings into front-end LLM context.")
+                self.log_transcript("📝 Successfully injected brain findings into front-end LLM context and queued next generation turn.")
             
             # 4. Trigger a new LLM generation turn on the front-end model to deliver the text in character
             if self.pipeline_task:
@@ -210,8 +232,10 @@ If any of these are requested, output a polite refusal directing them to a relev
                 
         except asyncio.CancelledError:
             logger.warning("⚠️ Background analysis task was cancelled due to user speech/interruption.")
+            self.log_transcript("⚠️ Background deep-thinking analysis was interrupted and cancelled by user speech.")
         except Exception as e:
             logger.error(f"❌ Error in background Pro analysis: {e}")
+            self.log_transcript(f"❌ Deep astrological calculation failed with exception: {e}")
             if self.context:
                 self.context.messages.append({
                     "role": "system",
