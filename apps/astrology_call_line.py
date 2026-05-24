@@ -452,17 +452,6 @@ class TokenUsageMonitor(FrameProcessor):
             for m in frame.data:
                 class_name = m.__class__.__name__
                 
-                # Dynamically inspect and log all public attributes of the metric object
-                attrs = []
-                for attr in dir(m):
-                    if not attr.startswith("_"):
-                        try:
-                            val = getattr(m, attr)
-                            attrs.append(f"{attr}={val}")
-                        except Exception:
-                            pass
-                logger.info(f"🔍 [Metrics Debug] Class: {class_name} | Attributes: {', '.join(attrs)}")
-                
                 if "LLM" in class_name and "Usage" in class_name:
                     prompt = getattr(m, "prompt_tokens", 0) or getattr(m, "prompt", 0) or getattr(m, "input_tokens", 0) or 0
                     completion = getattr(m, "completion_tokens", 0) or getattr(m, "completion", 0) or getattr(m, "output_tokens", 0) or 0
