@@ -52,7 +52,8 @@ from pipecat.frames.frames import (
     Frame, 
     TTSAudioRawFrame, 
     TTSStartedFrame, 
-    TTSStoppedFrame
+    TTSStoppedFrame,
+    MetricsFrame
 )
 
 # Use a dedicated name for the standard logger to avoid shadowing loguru.logger
@@ -394,6 +395,35 @@ transport_params = {
     ),
 }
 
+class TokenUsageMonitor(FrameProcessor):
+    def __init__(self):
+        super().__init__()
+        self.cumulative_prompt_tokens = 0
+        self.cumulative_completion_tokens = 0
+        self.cumulative_total_tokens = 0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        await super().process_frame(frame, direction)
+        
+        if isinstance(frame, MetricsFrame):
+            for m in frame.data:
+                class_name = m.__class__.__name__
+                if "LLM" in class_name and "Usage" in class_name:
+                    prompt = getattr(m, "prompt_tokens", 0)
+                    completion = getattr(m, "completion_tokens", 0)
+                    total = getattr(m, "total_tokens", 0)
+                    
+                    self.cumulative_prompt_tokens += prompt
+                    self.cumulative_completion_tokens += completion
+                    self.cumulative_total_tokens += total
+                    
+                    logger.info(f"📊 [LLM Token Usage] Prompt: {prompt} | Completion: {completion} | Total: {total}")
+                    logger.info(f"📈 [LLM Cumulative Usage] Prompt: {self.cumulative_prompt_tokens} | Completion: {self.cumulative_completion_tokens} | Total: {self.cumulative_total_tokens}")
+                    
+                    # Context limit for Gemini 2.5 Flash is 1,048,576 tokens
+                    if self.cumulative_total_tokens > 800000:
+                        logger.warning(f"⚠️ WARNING: Cumulative voice LLM token count ({self.cumulative_total_tokens}) is approaching context limit (1,048,576 tokens)!")
+
 async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, session_data: dict = None, tenant: str = None, appt_uid: str = None):
     logger.info("Starting Vedic Pathway Astrologer interleaved streaming bot")
 
@@ -566,8 +596,11 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
+    token_monitor = TokenUsageMonitor()
+
     pipeline_processors = [
         transport.input(), rtvi, stt, context_aggregator.user(), user_idle, llm,
+        token_monitor,
         SentenceAggregator(), tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
