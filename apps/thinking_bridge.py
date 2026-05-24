@@ -173,6 +173,13 @@ If any of these are requested, output a polite refusal directing them to a relev
                 msg = self._get_block_rejection_message(rejection_reason)
                 self.log_transcript(f"🚫 Guardrail block triggered: Rejection reason: {rejection_reason.strip()}")
                 
+                # Overwrite the pending tool result in the history so the LLM doesn't treat it as pending/unresolved
+                if self.context and self.context.messages:
+                    for m in reversed(self.context.messages):
+                        if m.get("role") == "tool" and m.get("name") == "request_analysis":
+                            m["content"] = f"BLOCKED: Astrological brain analysis aborted. Reason: {msg}"
+                            break
+                
                 # Inject the block message and trigger LLM turn
                 if self.context:
                     self.context.messages.append({
@@ -245,6 +252,13 @@ If any of these are requested, output a polite refusal directing them to a relev
             logger.info(f"🧠 Pro answered in background: {final_text}")
             self.log_transcript(f"🧠 Brain completed astrological calculations. Final findings: '{final_text}'")
             
+            # Overwrite the pending tool result in the history so the LLM has a completely resolved and consistent tool history
+            if self.context and self.context.messages:
+                for m in reversed(self.context.messages):
+                    if m.get("role") == "tool" and m.get("name") == "request_analysis":
+                        m["content"] = f"Calculations completed successfully. Astrological findings: {final_text}"
+                        break
+            
             # 3. Inject the result into the front-end LLM context messages history
             if self.context:
                 self.context.messages.append({
@@ -270,6 +284,14 @@ If any of these are requested, output a polite refusal directing them to a relev
         except Exception as e:
             logger.error(f"❌ Error in background Pro analysis: {e}")
             self.log_transcript(f"❌ Deep astrological calculation failed with exception: {e}")
+            
+            # Overwrite the pending tool result in the history so the LLM knows the task is finished/failed
+            if self.context and self.context.messages:
+                for m in reversed(self.context.messages):
+                    if m.get("role") == "tool" and m.get("name") == "request_analysis":
+                        m["content"] = f"ERROR: The background astrological calculations failed: {e}"
+                        break
+            
             if self.context:
                 self.context.messages.append({
                     "role": "system",
