@@ -34,6 +34,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMAssistantAggregatorParams,
+    LLMUserAggregatorParams,
 )
 from pipecat.utils.context.llm_context_summarization import (
     LLMAutoContextSummarizationConfig,
@@ -43,7 +44,7 @@ from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
-from pipecat.processors.user_idle_processor import UserIdleProcessor
+
 
 import base64
 import httpx
@@ -632,6 +633,9 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     context = LLMContext(messages, tools=pipecat_tools)
     context_aggregator = LLMContextAggregatorPair(
         context,
+        user_params=LLMUserAggregatorParams(
+            user_idle_timeout=6.0,
+        ),
         assistant_params=LLMAssistantAggregatorParams(
             enable_auto_context_summarization=True,
             auto_context_summarization_config=LLMAutoContextSummarizationConfig(
@@ -642,15 +646,6 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
             ),
         ),
     )
-
-    async def on_user_idle(processor: UserIdleProcessor):
-        logger.info("User is idle. Prompting bot to speak.")
-        if thinking_bridge:
-            thinking_bridge.cleanup_system_pollution()
-        messages.append({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
-        await task.queue_frames([LLMRunFrame()])
-
-    user_idle = UserIdleProcessor(callback=on_user_idle, timeout=6.0)
 
     llm = GoogleLLMService(
         api_key=os.environ.get("GEMINI_API_KEY"),
@@ -670,7 +665,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     transcript_logger = TranscriptLogger(transcript_file)
 
     pipeline_processors = [
-        transport.input(), stt, context_aggregator.user(), user_idle, llm,
+        transport.input(), stt, context_aggregator.user(), llm,
         token_monitor,
         SentenceAggregator(), transcript_logger, tts, v2v_metrics, transport.output(),
     ]
@@ -688,6 +683,14 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
 
     # Track if the bot has greeted the user yet
     has_greeted = False
+
+    @context_aggregator.user().event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        logger.info("User is idle. Prompting bot to speak.")
+        if thinking_bridge:
+            thinking_bridge.cleanup_system_pollution()
+        context.add_message({"role": "user", "content": "I have been quiet for a while. Could you politely check if I'm still there or ask a follow up question?"})
+        await task.queue_frames([LLMRunFrame()])
 
     @task.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
