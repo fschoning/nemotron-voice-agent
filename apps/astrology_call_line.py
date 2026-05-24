@@ -639,7 +639,7 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
             user_idle_timeout=6.0,
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS)),
             user_turn_strategies=UserTurnStrategies(
-                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.3)]
             )
         ),
         assistant_params=LLMAssistantAggregatorParams(
