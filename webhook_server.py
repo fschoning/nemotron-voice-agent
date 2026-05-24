@@ -25,6 +25,30 @@ logger.add(sys.stderr, level="INFO", filter=lambda record:
 
 app = FastAPI(title="Nemotron Voice Agent Webhook Server")
 
+@app.on_event("startup")
+async def startup_event():
+    api_key = os.getenv("MISTRAL_API_KEY")
+    if api_key:
+        logger.info("🔍 Discovering available Mistral voices at server startup...")
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(
+                    "https://api.mistral.ai/v1/audio/voices?limit=100",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                if res.status_code == 200:
+                    voices = res.json().get("items", [])
+                    logger.info(f"✅ Found {len(voices)} voices:")
+                    for i, v in enumerate(voices):
+                        logger.info(f"   [{i+1:02d}] Name: {v.get('name')} | ID: {v.get('id')}")
+                else:
+                    logger.error(f"Failed to fetch Mistral voices: {res.status_code} {res.text}")
+        except Exception as e:
+            logger.error(f"Error during Mistral voice discovery at startup: {e}")
+    else:
+        logger.warning("⚠️ MISTRAL_API_KEY not found in environment at startup. Skipping voice discovery.")
+
 # We only support a single concurrent bot task in this V1 architecture
 active_bot_task = None
 active_room_uid = None
