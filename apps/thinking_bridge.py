@@ -61,26 +61,9 @@ If any of these are requested, output a polite refusal directing them to a relev
         if not system_instruction or not system_instruction.strip():
             raise ValueError("FATAL: 'brainPrompt' is missing or empty in session_data for ThinkingBridge!")
             
-        persons = session_data.get("persons", [])
-        client_name = ""
-        first_name = ""
-        if persons and len(persons) > 0:
-            p = persons[0]
-            first_name = p.get('firstName', '')
-            client_name = f"{first_name} {p.get('lastName', '')}".strip()
-
         self.guardrail_prompt = session_data.get("guardrailPrompt")
         if not self.guardrail_prompt or not self.guardrail_prompt.strip():
             raise ValueError("FATAL: 'guardrailPrompt' is missing or empty in session_data for ThinkingBridge!")
-            
-        if client_name:
-            self.guardrail_prompt += (
-                f"\n\nIMPORTANT CONTEXT: The native client currently on the phone line is '{client_name}' (First name: '{first_name}'). "
-                f"Any questions asking about '{client_name}', '{first_name}', or using first-person pronouns ('I', 'me', 'my', 'myself') "
-                f"are referring directly to the caller themselves. These questions are fully permitted and do not violate any "
-                f"privacy or consent guidelines. Only reject queries that attempt to read the birth charts of entirely separate, "
-                f"third-party individuals who are not part of this consultation."
-            )
             
         logger.info("✅ Brain prompt and Guardrail prompt successfully loaded into ThinkingBridge.")
         history = []
