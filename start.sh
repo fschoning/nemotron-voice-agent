@@ -35,6 +35,10 @@ else
     echo "⚠️ Warning: .venv not found. Running with system python."
 fi
 
+# Upgrade dependencies automatically to ensure modern context summarization is supported
+echo "📦 Checking and upgrading required Pipecat dependencies..."
+python3 -m pip install --upgrade "pipecat-ai[cartesia,daily,google,local-smart-turn-v3,openai,runner,silero,webrtc]"
+
 echo "🚀 Starting Vedic Astrology Call Line (Webhook Mode on Port 8090)..."
 echo "Log file: $LOG_FILE"
 nohup python3 webhook_server.py > "$LOG_FILE" 2>&1 &
