@@ -31,12 +31,13 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response import (
-    LLMAssistantAggregatorParams,
-    LLMContextSummarizationConfig,
-)
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
+    LLMAssistantAggregatorParams,
+)
+from pipecat.utils.context.llm_context_summarization import (
+    LLMAutoContextSummarizationConfig,
+    LLMContextSummaryConfig,
 )
 from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
@@ -633,9 +634,12 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     context_aggregator = LLMContextAggregatorPair(
         context,
         assistant_params=LLMAssistantAggregatorParams(
-            enable_context_summarization=True,
-            context_summarization_config=LLMContextSummarizationConfig(
+            enable_auto_context_summarization=True,
+            auto_context_summarization_config=LLMAutoContextSummarizationConfig(
                 max_unsummarized_messages=30,
+                summary_config=LLMContextSummaryConfig(
+                    min_messages_after_summary=20,
+                ),
             ),
         ),
     )
