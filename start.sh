@@ -61,11 +61,11 @@ import os, requests
 api_key = os.getenv("MISTRAL_API_KEY")
 try:
     voices = []
-    page_size = 10
-    page = 1
+    limit = 100
+    offset = 0
     seen_ids = set()
     while True:
-        res = requests.get(f"https://api.mistral.ai/v1/audio/voices?page={page}&page_size={page_size}", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        res = requests.get(f"https://api.mistral.ai/v1/audio/voices?limit={limit}&offset={offset}", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
         if res.status_code == 200:
             data = res.json()
             items = data.get("items", [])
@@ -80,7 +80,7 @@ try:
                 seen_ids.add(item.get("id"))
                 voices.append(item)
                 
-            page += 1
+            offset += limit
         else:
             print(f"❌ Failed to fetch voices: {res.status_code} {res.text}")
             break
