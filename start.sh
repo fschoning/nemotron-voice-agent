@@ -54,6 +54,28 @@ else
     echo "⚠️ Warning: pip command not found. Skipping dependency check."
 fi
 
+if [ -n "$MISTRAL_API_KEY" ]; then
+    echo "🔍 Fetching all available Mistral voices..."
+    python3 -c '
+import os, requests
+api_key = os.getenv("MISTRAL_API_KEY")
+try:
+    res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=200", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+    if res.status_code == 200:
+        voices = res.json().get("items", [])
+        print(f"\n--- Available Mistral Voices ({len(voices)} found) ---")
+        for i, v in enumerate(voices):
+            print(f"   [{i+1:03d}] Name: {v.get(\"name\")} | ID: {v.get(\"id\")}")
+        print("-------------------------------------------\n")
+    else:
+        print(f"❌ Failed to fetch voices: {res.status_code} {res.text}")
+except Exception as e:
+    print(f"⚠️ Error fetching voices: {e}")
+'
+else
+    echo "⚠️ Warning: MISTRAL_API_KEY environment variable not found. Skipping voice listing."
+fi
+
 echo "🚀 Starting Vedic Astrology Call Line (Webhook Mode on Port 8090)..."
 echo "Log file: $LOG_FILE"
 nohup python3 webhook_server.py > "$LOG_FILE" 2>&1 &
