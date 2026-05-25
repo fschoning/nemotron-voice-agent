@@ -71,8 +71,7 @@ try:
             if not items:
                 break
             voices.extend(items)
-            total = data.get("total", len(voices))
-            if len(voices) >= total or len(items) < limit:
+            if len(items) < limit:
                 break
             offset += limit
         else:
