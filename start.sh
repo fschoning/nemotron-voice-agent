@@ -56,7 +56,7 @@ fi
 
 if [ -n "$MISTRAL_API_KEY" ]; then
     echo "🔍 Fetching all available Mistral voices..."
-    python3 -c '
+    python -c '
 import os, sys
 try:
     from mistralai import Mistral
