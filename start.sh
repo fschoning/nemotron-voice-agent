@@ -65,7 +65,9 @@ try:
         voices = res.json().get("items", [])
         print(f"\n--- Available Mistral Voices ({len(voices)} found) ---")
         for i, v in enumerate(voices):
-            print(f"   [{i+1:03d}] Name: {v.get(\"name\")} | ID: {v.get(\"id\")}")
+            n = v.get("name")
+            uuid = v.get("id")
+            print(f"   [{i+1:03d}] Name: {n} | ID: {uuid}")
         print("-------------------------------------------\n")
     else:
         print(f"❌ Failed to fetch voices: {res.status_code} {res.text}")
