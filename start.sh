@@ -60,17 +60,31 @@ if [ -n "$MISTRAL_API_KEY" ]; then
 import os, requests
 api_key = os.getenv("MISTRAL_API_KEY")
 try:
-    res = requests.get("https://api.mistral.ai/v1/audio/voices?limit=200", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
-    if res.status_code == 200:
-        voices = res.json().get("items", [])
-        print(f"\n--- Available Mistral Voices ({len(voices)} found) ---")
-        for i, v in enumerate(voices):
-            n = v.get("name")
-            uuid = v.get("id")
-            print(f"   [{i+1:03d}] Name: {n} | ID: {uuid}")
-        print("-------------------------------------------\n")
-    else:
-        print(f"❌ Failed to fetch voices: {res.status_code} {res.text}")
+    voices = []
+    limit = 30
+    offset = 0
+    while True:
+        res = requests.get(f"https://api.mistral.ai/v1/audio/voices?limit={limit}&offset={offset}", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            items = data.get("items", [])
+            if not items:
+                break
+            voices.extend(items)
+            total = data.get("total", len(voices))
+            if len(voices) >= total or len(items) < limit:
+                break
+            offset += limit
+        else:
+            print(f"❌ Failed to fetch voices: {res.status_code} {res.text}")
+            break
+            
+    print(f"\n--- Available Mistral Voices ({len(voices)} found) ---")
+    for i, v in enumerate(voices):
+        n = v.get("name")
+        uuid = v.get("id")
+        print(f"   [{i+1:03d}] Name: {n} | ID: {uuid}")
+    print("-------------------------------------------\n")
 except Exception as e:
     print(f"⚠️ Error fetching voices: {e}")
 '
