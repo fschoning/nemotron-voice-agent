@@ -64,9 +64,10 @@ If any of these are requested, output a polite refusal directing them to a relev
             
         self.guardrail_prompt = session_data.get("guardrailPrompt")
         if not self.guardrail_prompt or not self.guardrail_prompt.strip():
-            raise ValueError("FATAL: 'guardrailPrompt' is missing or empty in session_data for ThinkingBridge!")
-            
-        logger.info("✅ Brain prompt and Guardrail prompt successfully loaded into ThinkingBridge.")
+            logger.warning("⚠️ 'guardrailPrompt' is missing or empty in session_data for ThinkingBridge. Sanitiser bypassed.")
+            self.guardrail_prompt = None
+        else:
+            logger.info("✅ Guardrail prompt successfully loaded into ThinkingBridge.")
         history = []
         
         persons = session_data.get("persons", [])
@@ -168,12 +169,15 @@ If any of these are requested, output a polite refusal directing them to a relev
             self.cleanup_system_pollution()
             self.log_transcript("Background deep-thinking worker started.")
             
-            # 1. Run the Sanitiser model (via asyncio.to_thread to keep the main event loop completely free)
-            sanitised = await asyncio.to_thread(
-                sanitise_question,
-                question,
-                self.guardrail_prompt
-            )
+            # 1. Run the Sanitiser model if guardrail_prompt is active (via asyncio.to_thread to keep event loop free)
+            if self.guardrail_prompt:
+                sanitised = await asyncio.to_thread(
+                    sanitise_question,
+                    question,
+                    self.guardrail_prompt
+                )
+            else:
+                sanitised = question
             
             self.log_transcript(f"Sanitiser output: '{sanitised}'")
             
