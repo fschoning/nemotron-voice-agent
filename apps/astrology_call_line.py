@@ -297,7 +297,8 @@ async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, atte
         logger.info("Skipping CRM write-back (demo mode or missing UID).")
         return
     
-    logger.info(f"Posting transcript to CRM for {tenant}/{appt_uid}")
+    url_trans = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/transcript"
+    logger.info(f"Posting transcript to CRM for {tenant}/{appt_uid}. Target URL: {url_trans}")
     
     entries = []
     for msg in context.messages:
@@ -319,14 +320,18 @@ async def finalize_session(tenant: str, appt_uid: str, context: LLMContext, atte
         "final": True
     }
     
+    logger.info(f"Request Payload (entries count: {len(entries)}): {json.dumps(transcript)}")
+    
     async with httpx.AsyncClient() as client:
         try:
-            url_trans = f"{INTERNALWS_BASE_URL}/consultation/{tenant}/{appt_uid}/transcript"
+            logger.info(f"Sending POST request to {url_trans}")
             res = await client.post(url_trans, json=transcript, timeout=10.0)
+            logger.info(f"POST Response status: {res.status_code}")
             res.raise_for_status()
             logger.info("✅ Saved transcript to CRM")
         except httpx.HTTPStatusError as e:
             logger.error(f"❌ Failed to post transcript (HTTP Status {e.response.status_code}): {e.response.text}")
+            logger.error(f"Request details - URL: {e.request.url} | Headers: {e.request.headers}")
         except Exception as e:
             import traceback
             logger.error(f"❌ Failed to post transcript: {e}\n{traceback.format_exc()}")
