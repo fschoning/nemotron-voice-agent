@@ -423,19 +423,16 @@ transport_params = {
     ),
 }
 
-class TranscriptLogger(FrameProcessor):
+class UserTranscriptLogger(FrameProcessor):
     def __init__(self, filename: Path):
         super().__init__()
         self.filename = filename
-        self.filename.parent.mkdir(exist_ok=True, parents=True)
-        with open(self.filename, "w", encoding="utf-8") as f:
-            f.write(f"=== Vedic Pathway Consultation Transcript ===\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
 
-        from pipecat.frames.frames import TranscriptionFrame, TextFrame
+        from pipecat.frames.frames import TranscriptionFrame
         if isinstance(frame, TranscriptionFrame):
             text = frame.text.strip()
             if text:
@@ -445,8 +442,18 @@ class TranscriptLogger(FrameProcessor):
                     with open(self.filename, "a", encoding="utf-8") as f:
                         f.write(f"[{timestamp}] USER: {text}\n")
                 await asyncio.to_thread(_write)
-                
-        elif isinstance(frame, TextFrame):
+
+class BotTranscriptLogger(FrameProcessor):
+    def __init__(self, filename: Path):
+        super().__init__()
+        self.filename = filename
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+
+        from pipecat.frames.frames import TextFrame
+        if isinstance(frame, TextFrame):
             text = frame.text.strip()
             if text:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -694,6 +701,8 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     transcripts_dir = Path(__file__).parent.parent / "transcripts"
     transcripts_dir.mkdir(exist_ok=True)
     transcript_file = transcripts_dir / f"transcript_{appt_uid or 'session'}.txt"
+    with open(transcript_file, "w", encoding="utf-8") as f:
+        f.write(f"=== Vedic Pathway Consultation Transcript ===\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
     thinking_bridge = ThinkingBridge(mcp_tools_cache, call_mcp_tool, session_data)
     thinking_bridge.transcript_file = transcript_file
@@ -701,12 +710,13 @@ async def run_bot(transport: DailyTransport, runner_args: RunnerArguments, sessi
     llm.register_function("end_call", thinking_bridge.handle_end_call)
 
     token_monitor = TokenUsageMonitor(thinking_bridge)
-    transcript_logger = TranscriptLogger(transcript_file)
+    user_transcript_logger = UserTranscriptLogger(transcript_file)
+    bot_transcript_logger = BotTranscriptLogger(transcript_file)
 
     pipeline_processors = [
-        transport.input(), stt, context_aggregator.user(), llm,
+        transport.input(), stt, user_transcript_logger, context_aggregator.user(), llm,
         token_monitor,
-        SentenceAggregator(), transcript_logger, tts, v2v_metrics, transport.output(),
+        SentenceAggregator(), bot_transcript_logger, tts, v2v_metrics, transport.output(),
     ]
     if audiobuffer: pipeline_processors.append(audiobuffer)
     pipeline_processors.append(context_aggregator.assistant())
